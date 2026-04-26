@@ -157,6 +157,29 @@ jobs:
       - name: Run app unit tests
         run: npm run test --workspace=@getpaseo/app
 
+  app-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build frontend dist
+        run: npm run build:web --workspace=@getpaseo/app
+
+      - name: Upload frontend dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-dist
+          path: packages/app/dist/
+          retention-days: 7
+
   playwright:
     runs-on: ubuntu-latest
     steps:
