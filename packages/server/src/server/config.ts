@@ -39,6 +39,8 @@ export type CliConfigOverrides = Partial<{
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
   hostnames: HostnamesConfig;
+  username: string;
+  password: string;
 }>;
 
 const OptionalVoiceLlmProviderSchema = z
@@ -165,6 +167,26 @@ function resolveCorsAllowedOrigins(
   );
 }
 
+function resolveBasicAuthConfig(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+  cli: CliConfigOverrides | undefined,
+): PaseoDaemonConfig["basicAuth"] {
+  const username =
+    cli?.username ?? env.PASEO_AUTH_USERNAME ?? persisted.daemon?.auth?.username ?? "";
+  const password =
+    cli?.password ?? env.PASEO_AUTH_PASSWORD ?? persisted.daemon?.auth?.password ?? "";
+  const hasUsername = username.trim().length > 0;
+  const hasPassword = password.length > 0;
+  if (!hasUsername && !hasPassword) {
+    return undefined;
+  }
+  if (!hasUsername || !hasPassword) {
+    throw new Error("Both username and password are required for daemon Basic Auth");
+  }
+  return { username: username.trim(), password };
+}
+
 // PASEO_LISTEN can be:
 // - host:port (TCP)
 // - /path/to/socket (Unix socket)
@@ -237,6 +259,7 @@ export function loadConfig(
     paseoHome,
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
+    basicAuth: resolveBasicAuthConfig(env, persisted, options?.cli),
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",

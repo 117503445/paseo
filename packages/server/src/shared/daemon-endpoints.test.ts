@@ -1,10 +1,49 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
   CURRENT_RELAY_PROTOCOL_VERSION,
+  extractBasicAuthCredentialsFromEndpoint,
+  normalizeDaemonHttpEndpoint,
   normalizeRelayProtocolVersion,
+  redactDaemonHttpEndpointCredentials,
 } from "./daemon-endpoints.js";
+
+describe("daemon direct HTTP endpoints", () => {
+  test("normalizes legacy host:port values to explicit http URLs", () => {
+    expect(normalizeDaemonHttpEndpoint("localhost:8080")).toBe("http://localhost:8080");
+    expect(normalizeDaemonHttpEndpoint("127.0.0.1:8080")).toBe("http://localhost:8080");
+    expect(normalizeDaemonHttpEndpoint("example.com:443")).toBe("https://example.com");
+  });
+
+  test("preserves explicit http and https protocols", () => {
+    expect(normalizeDaemonHttpEndpoint("http://localhost:8080")).toBe("http://localhost:8080");
+    expect(normalizeDaemonHttpEndpoint("https://example.com:1443")).toBe(
+      "https://example.com:1443",
+    );
+    expect(normalizeDaemonHttpEndpoint("https://example.com")).toBe("https://example.com");
+  });
+
+  test("builds websocket URLs from the declared direct protocol", () => {
+    expect(buildDaemonWebSocketUrl("http://localhost:8080")).toBe("ws://localhost:8080/ws");
+    expect(buildDaemonWebSocketUrl("https://example.com:1443")).toBe("wss://example.com:1443/ws");
+    expect(buildDaemonWebSocketUrl("https://example.com")).toBe("wss://example.com/ws");
+  });
+
+  test("extracts and redacts HTTP Basic Auth credentials", () => {
+    expect(extractBasicAuthCredentialsFromEndpoint("http://root:pass@localhost:8080")).toEqual({
+      username: "root",
+      password: "pass",
+    });
+    expect(redactDaemonHttpEndpointCredentials("http://root:pass@localhost:8080")).toBe(
+      "http://root:****@localhost:8080",
+    );
+    expect(buildDaemonWebSocketUrl("http://root:pass@localhost:8080")).toBe(
+      "ws://root:pass@localhost:8080/ws",
+    );
+  });
+});
 
 describe("relay websocket URL versioning", () => {
   test("defaults relay URLs to v2", () => {

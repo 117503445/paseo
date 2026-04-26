@@ -1,6 +1,7 @@
 import { WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
+import { timingSafeEqual } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -66,9 +67,65 @@ interface PendingConnection {
 interface WebSocketServerConfig {
   allowedOrigins: Set<string>;
   hostnames?: HostnamesConfig;
+  basicAuth?: {
+    username: string;
+    password: string;
+  };
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+
+function secureStringEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function parseBasicAuthorizationHeader(
+  value: string | undefined,
+): WebSocketServerConfig["basicAuth"] | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/^Basic\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  let decoded: string;
+  try {
+    decoded = Buffer.from(match[1], "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+  const separatorIndex = decoded.indexOf(":");
+  if (separatorIndex < 0) {
+    return null;
+  }
+  return {
+    username: decoded.slice(0, separatorIndex),
+    password: decoded.slice(separatorIndex + 1),
+  };
+}
+
+function isBasicAuthorizationValid(
+  authorization: string | undefined,
+  basicAuth: WebSocketServerConfig["basicAuth"],
+): boolean {
+  if (!basicAuth) {
+    return true;
+  }
+  const credentials = parseBasicAuthorizationHeader(authorization);
+  if (!credentials) {
+    return false;
+  }
+  return (
+    secureStringEquals(credentials.username, basicAuth.username) &&
+    secureStringEquals(credentials.password, basicAuth.password)
+  );
+}
 
 function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -560,12 +617,12 @@ export class VoiceAssistantWebSocketServer {
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
   ): WebSocketServer {
-    const { allowedOrigins, hostnames } = wsConfig;
+    const { allowedOrigins, hostnames, basicAuth } = wsConfig;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
-        this.verifyWsClient(req, allowedOrigins, hostnames, callback);
+        this.verifyWsClient(req, allowedOrigins, hostnames, basicAuth, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -586,6 +643,7 @@ export class VoiceAssistantWebSocketServer {
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
+    basicAuth: WebSocketServerConfig["basicAuth"],
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
     const requestMetadata = extractSocketRequestMetadata(req);
@@ -598,6 +656,14 @@ export class VoiceAssistantWebSocketServer {
         "Rejected connection from disallowed host",
       );
       callback(false, 403, "Host not allowed");
+      return;
+    }
+    if (!isBasicAuthorizationValid(req.headers.authorization, basicAuth)) {
+      this.logger.warn(
+        { ...requestMetadata, host: requestHost },
+        "Rejected unauthenticated connection",
+      );
+      callback(false, 401, "Unauthorized");
       return;
     }
     const sameOrigin =

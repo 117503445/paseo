@@ -3,9 +3,13 @@ import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl as buildSharedRelayWebSocketUrl,
   deriveLabelFromEndpoint,
+  extractBasicAuthCredentialsFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonHttpEndpoint,
   normalizeHostPort,
+  parseDaemonHttpEndpoint,
   parseHostPort,
+  redactDaemonHttpEndpointCredentials,
   type HostPortParts,
 } from "@server/shared/daemon-endpoints";
 
@@ -14,9 +18,13 @@ export type { HostPortParts };
 export {
   buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
+  extractBasicAuthCredentialsFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonHttpEndpoint,
   normalizeHostPort,
+  parseDaemonHttpEndpoint,
   parseHostPort,
+  redactDaemonHttpEndpointCredentials,
 };
 
 function decodeBase64UrlToUtf8(input: string): string {
@@ -32,4 +40,15 @@ export function decodeOfferFragmentPayload(encoded: string): unknown {
 
 export function buildRelayWebSocketUrl(params: { endpoint: string; serverId: string }): string {
   return buildSharedRelayWebSocketUrl({ ...params, role: "client" });
+}
+
+export function buildBasicAuthHeaderFromEndpoint(endpoint: string): string | null {
+  const credentials = extractBasicAuthCredentialsFromEndpoint(endpoint);
+  if (!credentials) {
+    return null;
+  }
+  const token = Buffer.from(`${credentials.username}:${credentials.password}`, "utf8").toString(
+    "base64",
+  );
+  return `Basic ${token}`;
 }

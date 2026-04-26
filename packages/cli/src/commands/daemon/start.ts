@@ -23,6 +23,8 @@ export function startCommand(): Command {
     .option("--no-relay", "Disable relay connection")
     .option("--no-mcp", "Disable the Agent MCP HTTP endpoint")
     .option("--no-inject-mcp", "Disable auto-injecting the Paseo MCP into created agents")
+    .option("--username <username>", "Require HTTP Basic Auth username for direct connections")
+    .option("--password <password>", "Require HTTP Basic Auth password for direct connections")
     .option(
       "--hostnames <hosts>",
       'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',

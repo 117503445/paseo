@@ -226,9 +226,11 @@ export function createScriptProxyMiddleware({
 export function createScriptProxyUpgradeHandler({
   routeStore,
   logger,
+  isAuthorized,
 }: {
   routeStore: ScriptRouteStore;
   logger: Logger;
+  isAuthorized?: (req: IncomingMessage) => boolean;
 }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
   return (req, socket, head) => {
     const hostHeader = req.headers.host;
@@ -240,16 +242,20 @@ export function createScriptProxyUpgradeHandler({
     if (!route) {
       return;
     }
+    if (isAuthorized && !isAuthorized(req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Paseo"\r\n\r\n');
+      socket.destroy();
+      return;
+    }
 
     const targetSocket = net.connect({ host: "127.0.0.1", port: route.port }, () => {
-      // Reconstruct the raw HTTP upgrade request to send to the target
+      // 重建原始 HTTP upgrade 请求并转发到目标服务。
       const forwardedHeaders = stripHopByHopHeaders(req.headers);
       forwardedHeaders["x-forwarded-for"] = req.socket.remoteAddress ?? "127.0.0.1";
       forwardedHeaders["x-forwarded-host"] = hostHeader.replace(/:\d+$/, "");
       forwardedHeaders["x-forwarded-proto"] = "http";
 
-      // Re-include upgrade and connection headers — they are required for
-      // WebSocket handshake even though they are hop-by-hop.
+      // upgrade 和 connection 虽然是逐跳头，但 WebSocket 握手必须保留。
       forwardedHeaders["connection"] = "Upgrade";
       forwardedHeaders["upgrade"] = req.headers.upgrade ?? "websocket";
 

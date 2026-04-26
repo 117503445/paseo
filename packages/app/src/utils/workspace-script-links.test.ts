@@ -25,7 +25,11 @@ function resolveLink(activeConnection: ActiveConnection | null) {
 describe("resolveWorkspaceScriptLink", () => {
   it("uses the local proxy URL for loopback TCP connections", () => {
     expect(
-      resolveLink({ type: "directTcp", endpoint: "localhost:6767", display: "localhost:6767" }),
+      resolveLink({
+        type: "directTcp",
+        endpoint: "http://localhost:6767",
+        display: "http://localhost:6767",
+      }),
     ).toEqual({
       openUrl: "http://web.feature.paseo.localhost:6767",
       labelUrl: "http://web.feature.paseo.localhost:6767",
@@ -45,8 +49,8 @@ describe("resolveWorkspaceScriptLink", () => {
     expect(
       resolveLink({
         type: "directTcp",
-        endpoint: "mac-mini.tail123.ts.net:6767",
-        display: "mac-mini.tail123.ts.net:6767",
+        endpoint: "https://mac-mini.tail123.ts.net:6767",
+        display: "https://mac-mini.tail123.ts.net:6767",
       }),
     ).toEqual({
       openUrl: "http://mac-mini.tail123.ts.net:3000",
@@ -59,6 +63,19 @@ describe("resolveWorkspaceScriptLink", () => {
       resolveLink({ type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" }),
     ).toEqual({
       openUrl: null,
+      labelUrl: "http://web.feature.paseo.localhost:6767",
+    });
+  });
+
+  it("injects Basic Auth credentials only into proxy open URLs", () => {
+    expect(
+      resolveLink({
+        type: "directTcp",
+        endpoint: "http://root:pass@localhost:6767",
+        display: "http://root:****@localhost:6767",
+      }),
+    ).toEqual({
+      openUrl: "http://root:pass@web.feature.paseo.localhost:6767/",
       labelUrl: "http://web.feature.paseo.localhost:6767",
     });
   });

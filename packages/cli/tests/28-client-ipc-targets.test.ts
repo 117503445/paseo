@@ -50,6 +50,17 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
+  console.log("Test 3c: HTTP daemon URLs map to websocket targets with Basic Auth");
+  const target = resolveDaemonTarget("http://root:pass@localhost:8080");
+  assert.deepStrictEqual(target, {
+    type: "tcp",
+    url: "ws://root:pass@localhost:8080/ws",
+    authHeader: "Basic cm9vdDpwYXNz",
+  });
+  console.log("✓ HTTP daemon URLs map to websocket targets with Basic Auth\n");
+}
+
+{
   console.log("Test 4: default host resolution tries local IPC first, then localhost fallback");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-"));
   try {

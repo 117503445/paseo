@@ -1,7 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const daemonClientMock = vi.hoisted(() => {
-  const createdConfigs: Array<{ clientId?: string; url?: string }> = [];
+  const createdConfigs: Array<{
+    clientId?: string;
+    url?: string;
+    authHeader?: string;
+  }> = [];
 
   class MockDaemonClient {
     public lastError: string | null = null;
@@ -114,5 +118,19 @@ describe("test-daemon-connection connectToDaemon", () => {
     expect(daemonClientMock.createdConfigs[0]?.url).toBe(
       "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
     );
+  });
+
+  it("uses direct URL credentials for HTTP Basic Auth", async () => {
+    const mod = await import("./test-daemon-connection");
+
+    const result = await mod.connectToDaemon({
+      id: "direct:http://root:pass@localhost:8080",
+      type: "directTcp",
+      endpoint: "http://root:pass@localhost:8080",
+    });
+    await result.client.close();
+
+    expect(daemonClientMock.createdConfigs[0]?.url).toBe("ws://root:pass@localhost:8080/ws");
+    expect(daemonClientMock.createdConfigs[0]?.authHeader).toBe("Basic cm9vdDpwYXNz");
   });
 });

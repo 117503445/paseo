@@ -15,7 +15,13 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
-import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
+import {
+  buildBasicAuthHeaderFromEndpoint,
+  decodeOfferFragmentPayload,
+  normalizeDaemonHttpEndpoint,
+  normalizeHostPort,
+  redactDaemonHttpEndpointCredentials,
+} from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
 import { shouldUseDesktopDaemon, startDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -201,7 +207,7 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
     return {
       type: "directTcp",
       endpoint: connection.endpoint,
-      display: connection.endpoint,
+      display: redactDaemonHttpEndpointCredentials(connection.endpoint),
     };
   }
   return {
@@ -471,6 +477,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         return new DaemonClient({
           ...base,
           url: buildDaemonWebSocketUrl(connection.endpoint),
+          authHeader: buildBasicAuthHeaderFromEndpoint(connection.endpoint) ?? undefined,
         });
       }
       return new DaemonClient({
@@ -1312,7 +1319,7 @@ export class HostRuntimeStore {
     label?: string;
     existingClient?: DaemonClient;
   }): Promise<HostProfile> {
-    const endpoint = normalizeHostPort(input.endpoint);
+    const endpoint = normalizeDaemonHttpEndpoint(input.endpoint);
     return this.upsertHostConnection({
       serverId: input.serverId,
       label: input.label,

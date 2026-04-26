@@ -5,7 +5,10 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { Link2 } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
-import { normalizeHostPort } from "@/utils/daemon-endpoints";
+import {
+  normalizeDaemonHttpEndpoint,
+  redactDaemonHttpEndpointCredentials,
+} from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -44,10 +47,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
 }));
-
-function isHostPortOnly(raw: string): boolean {
-  return !raw.includes("://") && !raw.includes("/");
-}
 
 function normalizeTransportMessage(message: string | null | undefined): string | null {
   if (!message) return null;
@@ -120,8 +119,7 @@ function buildConnectionFailureCopy(
     rawLower.includes("tls") ||
     rawLower.includes("ssl")
   ) {
-    detail =
-      "TLS error. Direct connections use an unencrypted local connection. Use relay for remote access.";
+    detail = "TLS error. Check the daemon URL protocol and certificate, or use relay.";
   } else if (raw) {
     detail = "Unable to connect. Check the host/port and that the daemon is reachable.";
   } else {
@@ -187,16 +185,11 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       setErrorMessage("Host is required");
       return;
     }
-    if (!isHostPortOnly(raw)) {
-      setErrorMessage("Enter host:port only (no ws://, no /ws)");
-      return;
-    }
-
     let endpoint: string;
     try {
-      endpoint = normalizeHostPort(raw);
+      endpoint = normalizeDaemonHttpEndpoint(raw);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid host:port";
+      const message = error instanceof Error ? error.message : "Invalid daemon URL";
       setErrorMessage(message);
       return;
     }
@@ -221,7 +214,8 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
     } catch (error) {
-      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
+      const displayEndpoint = redactDaemonHttpEndpointCredentials(endpoint);
+      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(displayEndpoint, error);
       let combined: string;
       if (rawDetail && detail && rawDetail !== detail) {
         combined = `${title}\n${detail}\nDetails: ${rawDetail}`;
@@ -269,7 +263,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           nativeID="direct-host-input"
           accessibilityLabel="direct-host-input"
           onChangeText={handleChangeEndpoint}
-          placeholder="hostname:port"
+          placeholder="http://localhost:6767"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
           autoCapitalize="none"

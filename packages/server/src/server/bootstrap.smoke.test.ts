@@ -3,7 +3,10 @@ import path from "node:path";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { WebSocket } from "ws";
 
+import { DaemonClient } from "../client/daemon-client.js";
+import type { WebSocketLike } from "../client/daemon-client.js";
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -13,6 +16,14 @@ describe("paseo daemon bootstrap", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  const nodeWebSocketFactory = (
+    url: string,
+    options?: { headers?: Record<string, string> },
+  ): WebSocketLike =>
+    new WebSocket(url, {
+      headers: options?.headers,
+    }) as unknown as WebSocketLike;
 
   test("starts and serves health endpoint", async () => {
     const daemonHandle = await createTestPaseoDaemon({
@@ -26,15 +37,51 @@ describe("paseo daemon bootstrap", () => {
       },
     });
     try {
-      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`, {
-        headers: daemonHandle.agentMcpAuthHeader
-          ? { Authorization: daemonHandle.agentMcpAuthHeader }
-          : undefined,
-      });
+      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`);
       expect(response.ok).toBe(true);
       const payload = await response.json();
       expect(payload.status).toBe("ok");
       expect(typeof payload.timestamp).toBe("string");
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("requires Basic Auth for direct HTTP and websocket access when configured", async () => {
+    const daemonHandle = await createTestPaseoDaemon({
+      basicAuth: { username: "root", password: "pass" },
+    });
+    const authHeader = `Basic ${Buffer.from("root:pass", "utf8").toString("base64")}`;
+    try {
+      const unauthenticatedHealth = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`);
+      expect(unauthenticatedHealth.status).toBe(401);
+
+      const authenticatedHealth = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`, {
+        headers: { Authorization: authHeader },
+      });
+      expect(authenticatedHealth.ok).toBe(true);
+
+      const unauthenticatedClient = new DaemonClient({
+        url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+        clientId: "cid_basic_auth_missing",
+        webSocketFactory: nodeWebSocketFactory,
+        reconnect: { enabled: false },
+        connectTimeoutMs: 1000,
+      });
+      await expect(unauthenticatedClient.connect()).rejects.toThrow();
+      await unauthenticatedClient.close().catch(() => undefined);
+
+      const authenticatedClient = new DaemonClient({
+        url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+        clientId: "cid_basic_auth_ok",
+        authHeader,
+        webSocketFactory: nodeWebSocketFactory,
+        reconnect: { enabled: false },
+        connectTimeoutMs: 1000,
+      });
+      await authenticatedClient.connect();
+      expect(authenticatedClient.getLastServerInfoMessage()?.serverId).toBeTruthy();
+      await authenticatedClient.close();
     } finally {
       await daemonHandle.close();
     }

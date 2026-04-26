@@ -6,11 +6,26 @@ import type {
 
 export function defaultWebSocketFactory(
   url: string,
-  _options?: { headers?: Record<string, string> },
+  options?: { headers?: Record<string, string> },
 ): WebSocketLike {
-  const globalWs = (globalThis as { WebSocket?: new (url: string) => WebSocketLike }).WebSocket;
+  const globalWs = (
+    globalThis as {
+      WebSocket?: new (
+        url: string,
+        protocols?: string | string[],
+        options?: { headers?: Record<string, string> },
+      ) => WebSocketLike;
+    }
+  ).WebSocket;
   if (!globalWs) {
     throw new Error("WebSocket is not available in this runtime");
+  }
+  if (options?.headers && Object.keys(options.headers).length > 0) {
+    try {
+      return new globalWs(url, undefined, { headers: options.headers });
+    } catch {
+      return new globalWs(url);
+    }
   }
   return new globalWs(url);
 }

@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -141,14 +141,93 @@ function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null {
+function encodeUserInfoPart(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function createAgentMcpBaseUrl(
+  listenTarget: ListenTarget | null,
+  basicAuth: PaseoBasicAuthConfig | undefined,
+): string | null {
   if (!listenTarget || listenTarget.type !== "tcp") {
     return null;
   }
+  const authPart = basicAuth
+    ? `${encodeUserInfoPart(basicAuth.username)}:${encodeUserInfoPart(basicAuth.password)}@`
+    : "";
   return new URL(
     "/mcp/agents",
-    `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
+    `http://${authPart}${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
   ).toString();
+}
+
+function secureStringEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function parseBasicAuthorizationHeader(value: string | undefined): PaseoBasicAuthConfig | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/^Basic\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  let decoded: string;
+  try {
+    decoded = Buffer.from(match[1], "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+
+  const separatorIndex = decoded.indexOf(":");
+  if (separatorIndex < 0) {
+    return null;
+  }
+  return {
+    username: decoded.slice(0, separatorIndex),
+    password: decoded.slice(separatorIndex + 1),
+  };
+}
+
+function isBasicAuthorizationValid(
+  authorization: string | undefined,
+  basicAuth: PaseoBasicAuthConfig | undefined,
+): boolean {
+  if (!basicAuth) {
+    return true;
+  }
+  const credentials = parseBasicAuthorizationHeader(authorization);
+  if (!credentials) {
+    return false;
+  }
+  return (
+    secureStringEquals(credentials.username, basicAuth.username) &&
+    secureStringEquals(credentials.password, basicAuth.password)
+  );
+}
+
+function createBasicAuthMiddleware(
+  basicAuth: PaseoBasicAuthConfig | undefined,
+): express.RequestHandler {
+  return (req, res, next) => {
+    if (!basicAuth || req.method === "OPTIONS") {
+      next();
+      return;
+    }
+    if (isBasicAuthorizationValid(req.header("authorization"), basicAuth)) {
+      next();
+      return;
+    }
+    res.setHeader("WWW-Authenticate", 'Basic realm="Paseo"');
+    res.status(401).json({ error: "Unauthorized" });
+  };
 }
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
@@ -157,6 +236,11 @@ export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
   local?: PaseoLocalSpeechConfig;
+}
+
+export interface PaseoBasicAuthConfig {
+  username: string;
+  password: string;
 }
 
 export type DaemonLifecycleIntent =
@@ -178,6 +262,7 @@ export interface PaseoDaemonConfig {
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
+  basicAuth?: PaseoBasicAuthConfig;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
@@ -292,13 +377,7 @@ export async function createPaseoDaemon(
     });
   }
 
-  // Script proxy — intercepts requests for registered *.localhost hostnames
-  // and forwards them to the corresponding local script port. Placed after
-  // the host allowlist (*.localhost is already allowed) but before CORS and
-  // the rest of the routes so proxied requests skip unnecessary middleware.
-  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
-
-  // CORS - allow same-origin + configured origins
+  // CORS：允许同源和显式配置的来源。
   const allowedOrigins = new Set([
     ...config.corsAllowedOrigins,
     // Packaged desktop renderers use the custom paseo:// protocol scheme.
@@ -327,6 +406,11 @@ export async function createPaseoDaemon(
     }
     next();
   });
+
+  app.use(createBasicAuthMiddleware(config.basicAuth));
+
+  // 脚本代理放在鉴权之后，避免启用 Basic Auth 时绕过 daemon 入口保护。
+  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
   // Serve static files from public directory
   app.use("/public", express.static(staticDir));
@@ -402,13 +486,12 @@ export async function createPaseoDaemon(
 
   const httpServer = createHTTPServer(app);
 
-  // Script proxy WebSocket upgrade handler — must be registered before the
-  // VoiceAssistantWebSocketServer attaches its own "upgrade" listener so that
-  // script-bound upgrades are forwarded first. The handler is a no-op for
-  // requests that don't match a registered script route.
+  // 脚本代理的 WebSocket upgrade 处理器必须先注册，确保脚本路由优先转发。
+  // 不匹配已注册脚本路由的请求会继续交给后续 upgrade 监听器处理。
   const scriptProxyUpgradeHandler = createScriptProxyUpgradeHandler({
     routeStore: scriptRouteStore,
     logger,
+    isAuthorized: (req) => isBasicAuthorizationValid(req.headers.authorization, config.basicAuth),
   });
   httpServer.on("upgrade", scriptProxyUpgradeHandler);
 
@@ -706,7 +789,9 @@ export async function createPaseoDaemon(
         httpServer.off("error", onError);
         const logAndResolve = async () => {
           boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
-          const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
+          const mcpBaseUrl = mcpEnabled
+            ? createAgentMcpBaseUrl(boundListenTarget, config.basicAuth)
+            : null;
           agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
           agentManager.setMcpBaseUrl(agentMcpBaseUrl);
           daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
@@ -743,7 +828,7 @@ export async function createPaseoDaemon(
             config.paseoHome,
             daemonConfigStore,
             mcpBaseUrl,
-            { allowedOrigins, hostnames: configuredHostnames },
+            { allowedOrigins, hostnames: configuredHostnames, basicAuth: config.basicAuth },
             speechService,
             terminalManager,
             {

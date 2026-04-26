@@ -14,6 +14,8 @@ export interface DaemonStartOptions {
   mcp?: boolean;
   injectMcp?: boolean;
   hostnames?: string;
+  username?: string;
+  password?: string;
 }
 
 export interface LocalDaemonPidInfo {
@@ -116,6 +118,12 @@ function buildChildEnv(options: DaemonStartOptions): NodeJS.ProcessEnv {
   }
   if (options.hostnames) {
     childEnv.PASEO_HOSTNAMES = options.hostnames;
+  }
+  if (options.username) {
+    childEnv.PASEO_AUTH_USERNAME = options.username;
+  }
+  if (options.password) {
+    childEnv.PASEO_AUTH_PASSWORD = options.password;
   }
   return childEnv;
 }

@@ -3,6 +3,22 @@ import { describe, expect, test } from "vitest";
 import { PersistedConfigSchema } from "./persisted-config.js";
 
 describe("PersistedConfigSchema agent provider runtime settings", () => {
+  test("accepts daemon Basic Auth config", () => {
+    const parsed = PersistedConfigSchema.parse({
+      daemon: {
+        auth: {
+          username: "root",
+          password: "pass",
+        },
+      },
+    });
+
+    expect(parsed.daemon?.auth).toEqual({
+      username: "root",
+      password: "pass",
+    });
+  });
+
   test("legacy append entries are skipped during migration", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: {

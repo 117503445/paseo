@@ -1,5 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
+import { Buffer } from "node:buffer";
+import {
+  buildDaemonWebSocketUrl,
+  extractBasicAuthCredentialsFromEndpoint,
+  loadConfig,
+  resolvePaseoHome,
+  DaemonClient,
+} from "@getpaseo/server";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -18,6 +25,7 @@ type DaemonTarget =
   | {
       type: "tcp";
       url: string;
+      authHeader?: string;
     }
   | {
       type: "ipc";
@@ -25,8 +33,24 @@ type DaemonTarget =
       socketPath: string;
     };
 
+function buildBasicAuthHeader(credentials: { username: string; password: string }): string {
+  const token = Buffer.from(`${credentials.username}:${credentials.password}`, "utf8").toString(
+    "base64",
+  );
+  return `Basic ${token}`;
+}
+
+function resolveEnvBasicAuthHeader(env: NodeJS.ProcessEnv = process.env): string | null {
+  const username = env.PASEO_AUTH_USERNAME?.trim();
+  const password = env.PASEO_AUTH_PASSWORD;
+  if (!username || !password) {
+    return null;
+  }
+  return buildBasicAuthHeader({ username, password });
+}
+
 /**
- * Get the daemon host from environment or options
+ * 从环境变量或选项中解析 daemon host。
  */
 export function getDaemonHost(options?: ConnectOptions): string {
   return resolveDaemonHostCandidates(options)[0] ?? DEFAULT_HOST;
@@ -50,7 +74,7 @@ export function normalizeDaemonHost(raw: string): string | null {
     return `unix://${trimmed}`;
   }
 
-  // Windows absolute paths (e.g. C:\Users\foo) are filesystem paths, not TCP or IPC targets.
+  // Windows 绝对路径是文件系统路径，不是 TCP 或 IPC 目标。
   if (/^[A-Za-z]:[/\\]/.test(trimmed)) {
     return null;
   }
@@ -166,14 +190,16 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
     };
   }
 
+  const credentials = extractBasicAuthCredentialsFromEndpoint(trimmed);
   return {
     type: "tcp",
-    url: `ws://${trimmed}/ws`,
+    url: buildDaemonWebSocketUrl(trimmed),
+    ...(credentials ? { authHeader: buildBasicAuthHeader(credentials) } : {}),
   };
 }
 
 /**
- * Create a WebSocket factory that works in Node.js
+ * 创建适用于 Node.js 的 WebSocket 工厂。
  */
 function createNodeWebSocketFactory() {
   return (url: string, options?: { headers?: Record<string, string>; socketPath?: string }) => {
@@ -192,8 +218,7 @@ function createNodeWebSocketFactory() {
 }
 
 /**
- * Create and connect a daemon client
- * Returns the connected client or throws if connection fails
+ * 创建并连接 daemon client；连接失败时抛出错误。
  */
 async function tryConnectHost(
   host: string,
@@ -202,11 +227,14 @@ async function tryConnectHost(
   nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
 ): Promise<{ client: DaemonClient } | { error: unknown }> {
   const target = resolveDaemonTarget(host);
+  const authHeader =
+    target.type === "tcp" ? (target.authHeader ?? resolveEnvBasicAuthHeader()) : undefined;
   const client = new DaemonClient({
     url: target.url,
     clientId,
     clientType: "cli",
     appVersion: resolveCliVersion(),
+    ...(authHeader ? { authHeader } : {}),
     connectTimeoutMs: timeout,
     webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
       nodeWebSocketFactory(url, {

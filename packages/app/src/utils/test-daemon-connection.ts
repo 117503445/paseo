@@ -3,7 +3,11 @@ import type { DaemonClientConfig } from "@server/client/daemon-client";
 import type { HostConnection } from "@/types/host-connection";
 import { getOrCreateClientId } from "./client-id";
 import { resolveAppVersion } from "./app-version";
-import { buildDaemonWebSocketUrl, buildRelayWebSocketUrl } from "./daemon-endpoints";
+import {
+  buildBasicAuthHeaderFromEndpoint,
+  buildDaemonWebSocketUrl,
+  buildRelayWebSocketUrl,
+} from "./daemon-endpoints";
 import {
   buildLocalDaemonTransportUrl,
   createDesktopLocalDaemonTransportFactory,
@@ -79,6 +83,7 @@ export async function buildClientConfig(
     return {
       ...base,
       url: buildDaemonWebSocketUrl(connection.endpoint),
+      authHeader: buildBasicAuthHeaderFromEndpoint(connection.endpoint) ?? undefined,
     };
   }
 
