@@ -5,7 +5,11 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { Link2 } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
-import { normalizeHostPort } from "@/utils/daemon-endpoints";
+import {
+  normalizeDaemonAuthToken,
+  normalizeDaemonHttpEndpoint,
+  redactDaemonHttpEndpointCredentials,
+} from "@/utils/daemon-endpoints";
 import { DaemonConnectionTestError, connectToDaemon } from "@/utils/test-daemon-connection";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "./adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -44,10 +48,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
 }));
-
-function isHostPortOnly(raw: string): boolean {
-  return !raw.includes("://") && !raw.includes("/");
-}
 
 function normalizeTransportMessage(message: string | null | undefined): string | null {
   if (!message) return null;
@@ -120,8 +120,7 @@ function buildConnectionFailureCopy(
     rawLower.includes("tls") ||
     rawLower.includes("ssl")
   ) {
-    detail =
-      "TLS error. Direct connections use an unencrypted local connection. Use relay for remote access.";
+    detail = "TLS error. Check the daemon URL protocol and certificate, or use relay.";
   } else if (raw) {
     detail = "Unable to connect. Check the host/port and that the daemon is reachable.";
   } else {
@@ -150,14 +149,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const isMobile = useIsCompactFormFactor();
 
   const hostInputRef = useRef<TextInput>(null);
+  const tokenInputRef = useRef<TextInput>(null);
   const endpointRawRef = useRef("");
+  const tokenRawRef = useRef("");
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const clearInput = useCallback(() => {
     endpointRawRef.current = "";
+    tokenRawRef.current = "";
     hostInputRef.current?.clear();
+    tokenInputRef.current?.clear();
   }, []);
 
   const connectIcon = useMemo(
@@ -183,20 +186,16 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     if (isSaving) return;
 
     const raw = endpointRawRef.current.trim();
+    const token = normalizeDaemonAuthToken(tokenRawRef.current);
     if (!raw) {
       setErrorMessage("Host is required");
       return;
     }
-    if (!isHostPortOnly(raw)) {
-      setErrorMessage("Enter host:port only (no ws://, no /ws)");
-      return;
-    }
-
     let endpoint: string;
     try {
-      endpoint = normalizeHostPort(raw);
+      endpoint = normalizeDaemonHttpEndpoint(raw);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Invalid host:port";
+      const message = error instanceof Error ? error.message : "Invalid daemon URL";
       setErrorMessage(message);
       return;
     }
@@ -209,19 +208,22 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         id: "probe",
         type: "directTcp",
         endpoint,
+        ...(token ? { token } : {}),
       });
       await client.close().catch(() => undefined);
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
       const profile = await upsertDirectConnection({
         serverId,
         endpoint,
+        ...(token ? { token } : {}),
         label: hostname ?? undefined,
       });
 
       onSaved?.({ profile, serverId, hostname, isNewHost });
       handleClose();
     } catch (error) {
-      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(endpoint, error);
+      const displayEndpoint = redactDaemonHttpEndpointCredentials(endpoint);
+      const { title, detail, raw: rawDetail } = buildConnectionFailureCopy(displayEndpoint, error);
       let combined: string;
       if (rawDetail && detail && rawDetail !== detail) {
         combined = `${title}\n${detail}\nDetails: ${rawDetail}`;
@@ -232,7 +234,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       }
       setErrorMessage(combined);
       if (!isMobile) {
-        // Desktop/web: also surface it as a dialog for quick visibility.
+        // 桌面和 Web 上同时弹窗，便于快速看到失败原因。
         Alert.alert("Connection failed", combined);
       }
     } finally {
@@ -242,6 +244,10 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
 
   const handleChangeEndpoint = useCallback((next: string) => {
     endpointRawRef.current = next;
+  }, []);
+
+  const handleChangeToken = useCallback((next: string) => {
+    tokenRawRef.current = next;
   }, []);
 
   const handleSubmitEditing = useCallback(() => {
@@ -269,7 +275,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           nativeID="direct-host-input"
           accessibilityLabel="direct-host-input"
           onChangeText={handleChangeEndpoint}
-          placeholder="hostname:port"
+          placeholder="http://localhost:6767"
           placeholderTextColor={theme.colors.foregroundMuted}
           style={styles.input}
           autoCapitalize="none"
@@ -277,6 +283,26 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           keyboardType="url"
           editable={!isSaving}
           returnKeyType="done"
+          onSubmitEditing={handleSubmitEditing}
+        />
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.label}>Token</Text>
+        <AdaptiveTextInput
+          ref={tokenInputRef}
+          testID="direct-token-input"
+          nativeID="direct-token-input"
+          accessibilityLabel="direct-token-input"
+          onChangeText={handleChangeToken}
+          placeholder="Optional"
+          placeholderTextColor={theme.colors.foregroundMuted}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isSaving}
+          returnKeyType="done"
+          secureTextEntry
           onSubmitEditing={handleSubmitEditing}
         />
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}

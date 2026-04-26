@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const daemonClientMock = vi.hoisted(() => {
-  const createdConfigs: Array<{ clientId?: string; url?: string }> = [];
+  const createdConfigs: Array<{
+    clientId?: string;
+    url?: string;
+  }> = [];
 
   class MockDaemonClient {
     public lastError: string | null = null;
@@ -113,6 +116,22 @@ describe("test-daemon-connection connectToDaemon", () => {
 
     expect(daemonClientMock.createdConfigs[0]?.url).toBe(
       "paseo+local://socket?path=%2Ftmp%2Fpaseo.sock",
+    );
+  });
+
+  it("adds direct connection tokens to the websocket URL", async () => {
+    const mod = await import("./test-daemon-connection");
+
+    const result = await mod.connectToDaemon({
+      id: "direct:http://localhost:8080",
+      type: "directTcp",
+      endpoint: "http://localhost:8080",
+      token: "dev-token",
+    });
+    await result.client.close();
+
+    expect(daemonClientMock.createdConfigs[0]?.url).toBe(
+      "ws://localhost:8080/ws?paseoToken=dev-token",
     );
   });
 });

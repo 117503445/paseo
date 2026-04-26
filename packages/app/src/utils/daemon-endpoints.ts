@@ -1,22 +1,31 @@
-import { Buffer } from "buffer";
 import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl as buildSharedRelayWebSocketUrl,
   deriveLabelFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonAuthToken,
+  normalizeDaemonHttpEndpoint,
   normalizeHostPort,
+  parseDaemonHttpEndpoint,
   parseHostPort,
+  redactDaemonHttpEndpointCredentials,
   type HostPortParts,
 } from "@server/shared/daemon-endpoints";
 
 export type { HostPortParts };
 
 export {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
   buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonAuthToken,
+  normalizeDaemonHttpEndpoint,
   normalizeHostPort,
+  parseDaemonHttpEndpoint,
   parseHostPort,
+  redactDaemonHttpEndpointCredentials,
 };
 
 function decodeBase64UrlToUtf8(input: string): string {

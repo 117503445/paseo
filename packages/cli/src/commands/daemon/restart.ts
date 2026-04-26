@@ -62,6 +62,7 @@ function toStartOptions(options: CommandOptions): DaemonStartOptions {
     mcp: typeof options.mcp === "boolean" ? options.mcp : undefined,
     injectMcp: typeof options.injectMcp === "boolean" ? options.injectMcp : undefined,
     hostnames: typeof options.hostnames === "string" ? options.hostnames : undefined,
+    token: typeof options.token === "string" ? options.token : undefined,
   };
 
   if (startOptions.listen && startOptions.port) {

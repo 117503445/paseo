@@ -2,13 +2,16 @@ name: Nix Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/nix-build.yml"
+      - "packages/app/**"
+      - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
       - "packages/server/**"
       - "packages/relay/**"
@@ -21,13 +24,16 @@ on:
       - "flake.lock"
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/nix-build.yml"
+      - "packages/app/**"
+      - "packages/expo-two-way-audio/**"
       - "packages/highlight/**"
       - "packages/server/**"
       - "packages/relay/**"
       - "packages/cli/**"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -57,3 +63,75 @@ jobs:
 
       - name: Check npmDepsHash is up to date
         run: ./scripts/update-nix.sh --check
+
+      - name: Setup Node for frontend dist
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies for frontend dist
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        run: npm install
+
+      - name: Build frontend dist
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        run: npm run build:web --workspace=@getpaseo/app
+
+      - name: 发布 dev 构建到 GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_tag="dev-build"
+          release_title="Paseo dev 分支构建"
+          short_sha="${GITHUB_SHA::7}"
+          asset_path="$RUNNER_TEMP/paseo-dev-${short_sha}-nix-linux-x64.tar.gz"
+          checksum_path="$asset_path.sha256"
+          dist_asset_path="$RUNNER_TEMP/paseo-dev-${short_sha}-app-dist.tar.gz"
+          dist_checksum_path="$dist_asset_path.sha256"
+          notes_path="$RUNNER_TEMP/dev-release-notes.md"
+
+          tar --dereference --hard-dereference -czf "$asset_path" result
+          sha256sum "$asset_path" > "$checksum_path"
+          tar -czf "$dist_asset_path" -C packages/app dist
+          sha256sum "$dist_asset_path" > "$dist_checksum_path"
+
+          cat > "$notes_path" <<EOF
+          dev 分支构建产物。
+
+          提交: $GITHUB_SHA
+          工作流运行: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+
+          git tag --force "$release_tag" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$release_tag"
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release edit "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$notes_path" \
+              --prerelease
+          else
+            gh release create "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$notes_path" \
+              --prerelease \
+              --verify-tag
+          fi
+
+          gh release upload "$release_tag" \
+            "$asset_path" \
+            "$checksum_path" \
+            "$dist_asset_path" \
+            "$dist_checksum_path" \
+            --clobber \
+            --repo "$GITHUB_REPOSITORY"

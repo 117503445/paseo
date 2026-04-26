@@ -3,7 +3,7 @@ import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import type { HostProfile } from "@/types/host-connection";
-import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
+import { DAEMON_AUTH_TOKEN_QUERY_PARAM, buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb } from "@/constants/platform";
 
@@ -97,7 +97,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       const downloadUrl = buildDownloadUrl(
         downloadTarget.baseUrl,
         tokenResponse.token,
-        isWeb ? downloadTarget.authCredentials : null,
+        downloadTarget.authToken,
       );
 
       if (isWeb) {
@@ -111,9 +111,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       const downloadResumable = LegacyFileSystem.createDownloadResumable(
         downloadUrl,
         targetFile.uri,
-        downloadTarget.authHeader
-          ? { headers: { Authorization: downloadTarget.authHeader } }
-          : undefined,
+        undefined,
         (data) => {
           const now = Date.now();
           const { totalBytesWritten, totalBytesExpectedToWrite } = data;
@@ -237,21 +235,20 @@ function findMostRecentDownloadId(downloads: Map<string, Download>): string | nu
 
 interface DownloadTarget {
   baseUrl: string | null;
-  authHeader: string | null;
-  authCredentials: { username: string; password: string } | null;
+  authToken: string | null;
 }
 
 function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
-  const endpoint = daemon?.connections.find((conn) => conn.type === "directTcp")?.endpoint ?? null;
-  if (!endpoint) {
-    return { baseUrl: null, authHeader: null, authCredentials: null };
+  const connection = daemon?.connections.find((conn) => conn.type === "directTcp") ?? null;
+  if (!connection) {
+    return { baseUrl: null, authToken: null };
   }
 
   let parsed: URL;
   try {
-    parsed = new URL(buildDaemonWebSocketUrl(endpoint));
+    parsed = new URL(buildDaemonWebSocketUrl(connection.endpoint));
   } catch {
-    return { baseUrl: null, authHeader: null, authCredentials: null };
+    return { baseUrl: null, authToken: null };
   }
 
   if (parsed.protocol === "ws:") {
@@ -260,36 +257,17 @@ function resolveDaemonDownloadTarget(daemon?: HostProfile): DownloadTarget {
     parsed.protocol = "https:";
   }
 
-  let authCredentials: { username: string; password: string } | null = null;
-  if (parsed.username || parsed.password) {
-    authCredentials = {
-      username: decodeURIComponent(parsed.username),
-      password: decodeURIComponent(parsed.password),
-    };
-    parsed.username = "";
-    parsed.password = "";
-  }
-
   parsed.pathname = parsed.pathname.replace(/\/ws\/?$/, "/");
 
   const baseUrl = parsed.origin;
-  const authHeader = authCredentials
-    ? `Basic ${btoa(`${authCredentials.username}:${authCredentials.password}`)}`
-    : null;
-
-  return { baseUrl, authHeader, authCredentials };
+  return { baseUrl, authToken: connection.token ?? null };
 }
 
-function buildDownloadUrl(
-  baseUrl: string,
-  token: string,
-  authCredentials: { username: string; password: string } | null,
-): string {
+function buildDownloadUrl(baseUrl: string, token: string, authToken: string | null): string {
   const url = new URL("/api/files/download", baseUrl);
   url.searchParams.set("token", token);
-  if (authCredentials) {
-    url.username = authCredentials.username;
-    url.password = authCredentials.password;
+  if (authToken) {
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, authToken);
   }
   return url.toString();
 }

@@ -50,6 +50,16 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
+  console.log("Test 3c: HTTP daemon URLs map to websocket targets with token query");
+  const target = resolveDaemonTarget("http://localhost:8080", "dev-token");
+  assert.deepStrictEqual(target, {
+    type: "tcp",
+    url: "ws://localhost:8080/ws?paseoToken=dev-token",
+  });
+  console.log("✓ HTTP daemon URLs map to websocket targets with token query\n");
+}
+
+{
   console.log("Test 4: default host resolution tries local IPC first, then localhost fallback");
   const paseoHome = mkdtempSync(path.join(os.tmpdir(), "paseo-client-targets-"));
   try {

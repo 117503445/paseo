@@ -118,7 +118,7 @@ export async function runUpdateCommand(
     throw error;
   }
 
-  let client;
+  let client: Awaited<ReturnType<typeof connectToDaemon>>;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {

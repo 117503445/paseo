@@ -62,7 +62,7 @@ export async function runLsCommand(
 ): Promise<WorktreeLsResult> {
   const host = getDaemonHost({ host: options.host });
 
-  let client;
+  let client: Awaited<ReturnType<typeof connectToDaemon>>;
   try {
     client = await connectToDaemon({ host: options.host });
   } catch (err) {

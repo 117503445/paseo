@@ -1,6 +1,7 @@
 import { WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { basename, join } from "path";
+import { timingSafeEqual } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -51,6 +52,10 @@ import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
 } from "../shared/agent-attention-notification.js";
+import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
+} from "../shared/daemon-endpoints.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 
 export interface ExternalSocketMetadata {
@@ -66,9 +71,48 @@ interface PendingConnection {
 interface WebSocketServerConfig {
   allowedOrigins: Set<string>;
   hostnames?: HostnamesConfig;
+  authToken?: string;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
+
+function secureStringEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function extractHeaderToken(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return normalizeDaemonAuthToken(raw);
+}
+
+function extractQueryToken(rawUrl: string | undefined): string | null {
+  try {
+    const url = new URL(rawUrl ?? "/", "http://localhost");
+    return normalizeDaemonAuthToken(url.searchParams.get(DAEMON_AUTH_TOKEN_QUERY_PARAM));
+  } catch {
+    return null;
+  }
+}
+
+function isDaemonAuthTokenValid(
+  req: IncomingMessage,
+  authToken: WebSocketServerConfig["authToken"],
+): boolean {
+  const expectedToken = normalizeDaemonAuthToken(authToken);
+  if (!expectedToken) {
+    return true;
+  }
+  const token = extractHeaderToken(req.headers["x-paseo-token"]) ?? extractQueryToken(req.url);
+  if (!token) {
+    return false;
+  }
+  return secureStringEquals(token, expectedToken);
+}
 
 function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
@@ -560,12 +604,12 @@ export class VoiceAssistantWebSocketServer {
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
   ): WebSocketServer {
-    const { allowedOrigins, hostnames } = wsConfig;
+    const { allowedOrigins, hostnames, authToken } = wsConfig;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
-        this.verifyWsClient(req, allowedOrigins, hostnames, callback);
+        this.verifyWsClient(req, allowedOrigins, hostnames, authToken, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -586,6 +630,7 @@ export class VoiceAssistantWebSocketServer {
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
+    authToken: WebSocketServerConfig["authToken"],
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
     const requestMetadata = extractSocketRequestMetadata(req);
@@ -598,6 +643,14 @@ export class VoiceAssistantWebSocketServer {
         "Rejected connection from disallowed host",
       );
       callback(false, 403, "Host not allowed");
+      return;
+    }
+    if (!isDaemonAuthTokenValid(req, authToken)) {
+      this.logger.warn(
+        { ...requestMetadata, host: requestHost },
+        "Rejected unauthenticated connection",
+      );
+      callback(false, 401, "Unauthorized");
       return;
     }
     const sameOrigin =

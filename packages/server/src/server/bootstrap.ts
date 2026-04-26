@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -118,6 +118,10 @@ import { createTerminalManager, type TerminalManager } from "../terminal/termina
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
+} from "../shared/daemon-endpoints.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
@@ -141,14 +145,78 @@ function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null {
+function createAgentMcpBaseUrl(
+  listenTarget: ListenTarget | null,
+  authToken: string | undefined,
+): string | null {
   if (!listenTarget || listenTarget.type !== "tcp") {
     return null;
   }
-  return new URL(
+  const url = new URL(
     "/mcp/agents",
     `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
-  ).toString();
+  );
+  const normalizedToken = normalizeDaemonAuthToken(authToken);
+  if (normalizedToken) {
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, normalizedToken);
+  }
+  return url.toString();
+}
+
+function secureStringEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function extractHeaderToken(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return normalizeDaemonAuthToken(raw);
+}
+
+function extractQueryToken(rawUrl: string | undefined): string | null {
+  try {
+    const url = new URL(rawUrl ?? "/", "http://localhost");
+    return normalizeDaemonAuthToken(url.searchParams.get(DAEMON_AUTH_TOKEN_QUERY_PARAM));
+  } catch {
+    return null;
+  }
+}
+
+function extractDaemonAuthToken(req: IncomingMessage | express.Request): string | null {
+  return extractHeaderToken(req.headers["x-paseo-token"]) ?? extractQueryToken(req.url);
+}
+
+function isDaemonAuthTokenValid(
+  req: IncomingMessage | express.Request,
+  authToken: string | undefined,
+): boolean {
+  const expectedToken = normalizeDaemonAuthToken(authToken);
+  if (!expectedToken) {
+    return true;
+  }
+  const token = extractDaemonAuthToken(req);
+  if (!token) {
+    return false;
+  }
+  return secureStringEquals(token, expectedToken);
+}
+
+function createTokenAuthMiddleware(authToken: string | undefined): express.RequestHandler {
+  return (req, res, next) => {
+    if (!normalizeDaemonAuthToken(authToken) || req.method === "OPTIONS") {
+      next();
+      return;
+    }
+    if (isDaemonAuthTokenValid(req, authToken)) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: "Unauthorized" });
+  };
 }
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
@@ -157,6 +225,10 @@ export type PaseoLocalSpeechConfig = LocalSpeechProviderConfig;
 export interface PaseoSpeechConfig {
   providers: RequestedSpeechProviders;
   local?: PaseoLocalSpeechConfig;
+}
+
+export interface PaseoTokenAuthConfig {
+  token: string;
 }
 
 export type DaemonLifecycleIntent =
@@ -178,6 +250,7 @@ export interface PaseoDaemonConfig {
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
+  authToken?: string;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
@@ -292,13 +365,7 @@ export async function createPaseoDaemon(
     });
   }
 
-  // Script proxy — intercepts requests for registered *.localhost hostnames
-  // and forwards them to the corresponding local script port. Placed after
-  // the host allowlist (*.localhost is already allowed) but before CORS and
-  // the rest of the routes so proxied requests skip unnecessary middleware.
-  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
-
-  // CORS - allow same-origin + configured origins
+  // CORS：允许同源和显式配置的来源。
   const allowedOrigins = new Set([
     ...config.corsAllowedOrigins,
     // Packaged desktop renderers use the custom paseo:// protocol scheme.
@@ -318,8 +385,11 @@ export async function createPaseoDaemon(
     if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Paseo-Token");
       res.setHeader("Access-Control-Allow-Credentials", "true");
+      if (req.headers["access-control-request-private-network"] === "true") {
+        res.setHeader("Access-Control-Allow-Private-Network", "true");
+      }
     }
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -327,6 +397,11 @@ export async function createPaseoDaemon(
     }
     next();
   });
+
+  app.use(createTokenAuthMiddleware(config.authToken));
+
+  // 脚本代理放在鉴权之后，避免启用 token 时绕过 daemon 入口保护。
+  app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
   // Serve static files from public directory
   app.use("/public", express.static(staticDir));
@@ -402,13 +477,12 @@ export async function createPaseoDaemon(
 
   const httpServer = createHTTPServer(app);
 
-  // Script proxy WebSocket upgrade handler — must be registered before the
-  // VoiceAssistantWebSocketServer attaches its own "upgrade" listener so that
-  // script-bound upgrades are forwarded first. The handler is a no-op for
-  // requests that don't match a registered script route.
+  // 脚本代理的 WebSocket upgrade 处理器必须先注册，确保脚本路由优先转发。
+  // 不匹配已注册脚本路由的请求会继续交给后续 upgrade 监听器处理。
   const scriptProxyUpgradeHandler = createScriptProxyUpgradeHandler({
     routeStore: scriptRouteStore,
     logger,
+    isAuthorized: (req) => isDaemonAuthTokenValid(req, config.authToken),
   });
   httpServer.on("upgrade", scriptProxyUpgradeHandler);
 
@@ -706,7 +780,9 @@ export async function createPaseoDaemon(
         httpServer.off("error", onError);
         const logAndResolve = async () => {
           boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
-          const mcpBaseUrl = mcpEnabled ? createAgentMcpBaseUrl(boundListenTarget) : null;
+          const mcpBaseUrl = mcpEnabled
+            ? createAgentMcpBaseUrl(boundListenTarget, config.authToken)
+            : null;
           agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
           agentManager.setMcpBaseUrl(agentMcpBaseUrl);
           daemonConfigStore.onFieldChange("mcp.injectIntoAgents", (value) => {
@@ -743,7 +819,7 @@ export async function createPaseoDaemon(
             config.paseoHome,
             daemonConfigStore,
             mcpBaseUrl,
-            { allowedOrigins, hostnames: configuredHostnames },
+            { allowedOrigins, hostnames: configuredHostnames, authToken: config.authToken },
             speechService,
             terminalManager,
             {

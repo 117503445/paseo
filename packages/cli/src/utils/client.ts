@@ -1,5 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { loadConfig, resolvePaseoHome, DaemonClient } from "@getpaseo/server";
+import {
+  buildDaemonWebSocketUrl,
+  loadConfig,
+  normalizeDaemonAuthToken,
+  resolvePaseoHome,
+  DaemonClient,
+} from "@getpaseo/server";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
@@ -25,8 +31,12 @@ type DaemonTarget =
       socketPath: string;
     };
 
+function resolveEnvAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  return normalizeDaemonAuthToken(env.PASEO_AUTH_TOKEN);
+}
+
 /**
- * Get the daemon host from environment or options
+ * 从环境变量或选项中解析 daemon host。
  */
 export function getDaemonHost(options?: ConnectOptions): string {
   return resolveDaemonHostCandidates(options)[0] ?? DEFAULT_HOST;
@@ -50,7 +60,7 @@ export function normalizeDaemonHost(raw: string): string | null {
     return `unix://${trimmed}`;
   }
 
-  // Windows absolute paths (e.g. C:\Users\foo) are filesystem paths, not TCP or IPC targets.
+  // Windows 绝对路径是文件系统路径，不是 TCP 或 IPC 目标。
   if (/^[A-Za-z]:[/\\]/.test(trimmed)) {
     return null;
   }
@@ -147,7 +157,7 @@ function stripIpcPrefix(trimmed: string): string {
   return trimmed;
 }
 
-export function resolveDaemonTarget(host: string): DaemonTarget {
+export function resolveDaemonTarget(host: string, token?: string | null): DaemonTarget {
   const trimmed = host.trim();
   if (
     trimmed.startsWith("unix://") ||
@@ -168,12 +178,12 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
 
   return {
     type: "tcp",
-    url: `ws://${trimmed}/ws`,
+    url: buildDaemonWebSocketUrl(trimmed, token),
   };
 }
 
 /**
- * Create a WebSocket factory that works in Node.js
+ * 创建适用于 Node.js 的 WebSocket 工厂。
  */
 function createNodeWebSocketFactory() {
   return (url: string, options?: { headers?: Record<string, string>; socketPath?: string }) => {
@@ -192,8 +202,7 @@ function createNodeWebSocketFactory() {
 }
 
 /**
- * Create and connect a daemon client
- * Returns the connected client or throws if connection fails
+ * 创建并连接 daemon client；连接失败时抛出错误。
  */
 async function tryConnectHost(
   host: string,
@@ -201,7 +210,7 @@ async function tryConnectHost(
   timeout: number,
   nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
 ): Promise<{ client: DaemonClient } | { error: unknown }> {
-  const target = resolveDaemonTarget(host);
+  const target = resolveDaemonTarget(host, resolveEnvAuthToken());
   const client = new DaemonClient({
     url: target.url,
     clientId,

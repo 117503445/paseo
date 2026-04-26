@@ -1,4 +1,8 @@
-import { parseHostPort } from "@server/shared/daemon-endpoints";
+import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
+  parseDaemonHttpEndpoint,
+} from "@server/shared/daemon-endpoints";
 import type { WorkspaceScriptPayload } from "@server/shared/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 
@@ -16,11 +20,26 @@ function isLoopbackHost(host: string): boolean {
 
 function buildDirectServiceUrl(endpoint: string, port: number): string | null {
   try {
-    const { host, isIpv6 } = parseHostPort(endpoint);
+    const { host, isIpv6 } = parseDaemonHttpEndpoint(endpoint);
     const base = isIpv6 ? `[${host}]` : host;
     return `http://${base}:${port}`;
   } catch {
     return null;
+  }
+}
+
+function buildProxyOpenUrl(proxyUrl: string, token?: string): string {
+  const authToken = normalizeDaemonAuthToken(token);
+  if (!authToken) {
+    return proxyUrl;
+  }
+
+  try {
+    const url = new URL(proxyUrl);
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, authToken);
+    return url.toString();
+  } catch {
+    return proxyUrl;
   }
 }
 
@@ -46,9 +65,15 @@ export function resolveWorkspaceScriptLink(input: {
   }
 
   try {
-    const { host } = parseHostPort(activeConnection.endpoint);
+    const { host } = parseDaemonHttpEndpoint(activeConnection.endpoint);
     if (isLoopbackHost(host)) {
-      return { openUrl: script.proxyUrl, labelUrl: script.proxyUrl };
+      if (!script.proxyUrl) {
+        return { openUrl: null, labelUrl: null };
+      }
+      return {
+        openUrl: buildProxyOpenUrl(script.proxyUrl, activeConnection.token),
+        labelUrl: script.proxyUrl,
+      };
     }
   } catch {
     return { openUrl: null, labelUrl: script.proxyUrl };

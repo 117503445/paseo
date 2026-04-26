@@ -39,6 +39,7 @@ export type CliConfigOverrides = Partial<{
   mcpEnabled: boolean;
   mcpInjectIntoAgents: boolean;
   hostnames: HostnamesConfig;
+  token: string;
 }>;
 
 const OptionalVoiceLlmProviderSchema = z
@@ -165,6 +166,16 @@ function resolveCorsAllowedOrigins(
   );
 }
 
+function resolveAuthToken(
+  env: NodeJS.ProcessEnv,
+  persisted: ReturnType<typeof loadPersistedConfig>,
+  cli: CliConfigOverrides | undefined,
+): PaseoDaemonConfig["authToken"] {
+  const token = cli?.token ?? env.PASEO_AUTH_TOKEN ?? persisted.daemon?.auth?.token ?? "";
+  const trimmed = token.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 // PASEO_LISTEN can be:
 // - host:port (TCP)
 // - /path/to/socket (Unix socket)
@@ -237,6 +248,7 @@ export function loadConfig(
     paseoHome,
     corsAllowedOrigins: resolveCorsAllowedOrigins(env, persisted),
     hostnames,
+    authToken: resolveAuthToken(env, persisted, options?.cli),
     mcpEnabled,
     mcpInjectIntoAgents,
     mcpDebug: env.MCP_DEBUG === "1",

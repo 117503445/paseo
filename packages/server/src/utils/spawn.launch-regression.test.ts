@@ -113,7 +113,7 @@ function collectChild(child: ChildProcess, timeoutMs = 10_000): Promise<SpawnRes
       error = err;
       settle({ code: null, signal: null });
     });
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       settle({ code, signal });
     });
   });
@@ -165,7 +165,7 @@ function withWindowsPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T>
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 

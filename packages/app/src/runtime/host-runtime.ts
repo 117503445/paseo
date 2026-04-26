@@ -15,7 +15,13 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
-import { decodeOfferFragmentPayload, normalizeHostPort } from "@/utils/daemon-endpoints";
+import {
+  decodeOfferFragmentPayload,
+  normalizeDaemonHttpEndpoint,
+  normalizeDaemonAuthToken,
+  normalizeHostPort,
+  redactDaemonHttpEndpointCredentials,
+} from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@server/shared/connection-offer";
 import { shouldUseDesktopDaemon, startDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
@@ -42,7 +48,7 @@ export type HostRuntimeBootstrapResult =
   | { ok: false; error: string };
 
 export type ActiveConnection =
-  | { type: "directTcp"; endpoint: string; display: string }
+  | { type: "directTcp"; endpoint: string; display: string; token?: string }
   | { type: "directSocket"; endpoint: string; display: "socket" }
   | { type: "directPipe"; endpoint: string; display: "pipe" }
   | { type: "relay"; endpoint: string; display: "relay" };
@@ -201,7 +207,8 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
     return {
       type: "directTcp",
       endpoint: connection.endpoint,
-      display: connection.endpoint,
+      display: redactDaemonHttpEndpointCredentials(connection.endpoint),
+      ...(connection.token ? { token: connection.token } : {}),
     };
   }
   return {
@@ -470,7 +477,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       if (connection.type === "directTcp") {
         return new DaemonClient({
           ...base,
-          url: buildDaemonWebSocketUrl(connection.endpoint),
+          url: buildDaemonWebSocketUrl(connection.endpoint, connection.token),
         });
       }
       return new DaemonClient({
@@ -1309,10 +1316,12 @@ export class HostRuntimeStore {
   async upsertDirectConnection(input: {
     serverId: string;
     endpoint: string;
+    token?: string;
     label?: string;
     existingClient?: DaemonClient;
   }): Promise<HostProfile> {
-    const endpoint = normalizeHostPort(input.endpoint);
+    const endpoint = normalizeDaemonHttpEndpoint(input.endpoint);
+    const token = normalizeDaemonAuthToken(input.token);
     return this.upsertHostConnection({
       serverId: input.serverId,
       label: input.label,
@@ -1320,6 +1329,7 @@ export class HostRuntimeStore {
         id: `direct:${endpoint}`,
         type: "directTcp",
         endpoint,
+        ...(token ? { token } : {}),
       },
       existingClient: input.existingClient,
     });
@@ -2087,6 +2097,7 @@ export interface HostMutations {
   upsertDirectConnection: (input: {
     serverId: string;
     endpoint: string;
+    token?: string;
     label?: string;
   }) => Promise<HostProfile>;
   upsertRelayConnection: (input: {

@@ -4,9 +4,17 @@ export interface HostPortParts {
   isIpv6: boolean;
 }
 
+export type DaemonHttpProtocol = "http" | "https";
+
+export interface DaemonHttpEndpointParts extends HostPortParts {
+  protocol: DaemonHttpProtocol;
+  hasExplicitPort: boolean;
+}
+
 export type RelayRole = "server" | "client";
 export type RelayProtocolVersion = "1" | "2";
 
+export const DAEMON_AUTH_TOKEN_QUERY_PARAM = "paseoToken";
 export const CURRENT_RELAY_PROTOCOL_VERSION: RelayProtocolVersion = "2";
 
 export function normalizeRelayProtocolVersion(
@@ -46,7 +54,7 @@ export function parseHostPort(input: string): HostPortParts {
     throw new Error("Host is required");
   }
 
-  // IPv6: [::1]:6767
+  // IPv6：[::1]:6767
   if (trimmed.startsWith("[")) {
     const match = trimmed.match(/^\[([^\]]+)\]:(\d{1,5})$/);
     if (!match) {
@@ -84,9 +92,101 @@ export function normalizeLoopbackToLocalhost(endpoint: string): string {
   return endpoint;
 }
 
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function normalizeDirectHost(host: string): { host: string; isIpv6: boolean } {
+  const normalizedHost = stripIpv6Brackets(host.trim());
+  const isIpv6 = normalizedHost.includes(":");
+  if (
+    normalizedHost === "127.0.0.1" ||
+    (!isIpv6 && normalizedHost === "0.0.0.0") ||
+    (isIpv6 && (normalizedHost === "::1" || normalizedHost === "::"))
+  ) {
+    return { host: "localhost", isIpv6: false };
+  }
+  return { host: normalizedHost, isIpv6 };
+}
+
+function defaultPortForProtocol(protocol: DaemonHttpProtocol): number {
+  return protocol === "https" ? 443 : 80;
+}
+
+function renderDaemonHttpEndpoint(parts: DaemonHttpEndpointParts): string {
+  const protocol = parts.protocol;
+  const hostPart = parts.isIpv6 ? `[${parts.host}]` : parts.host;
+  const portPart =
+    parts.hasExplicitPort || parts.port !== defaultPortForProtocol(protocol)
+      ? `:${parts.port}`
+      : "";
+  return `${protocol}://${hostPart}${portPart}`;
+}
+
+export function normalizeDaemonAuthToken(token: string | null | undefined): string | null {
+  const trimmed = token?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function parseDaemonHttpEndpoint(input: string): DaemonHttpEndpointParts {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("Daemon URL is required");
+  }
+
+  if (!trimmed.includes("://")) {
+    const { host, port, isIpv6 } = parseHostPort(trimmed);
+    const normalized = normalizeDirectHost(isIpv6 ? `[${host}]` : host);
+    const protocol = port === 443 ? "https" : "http";
+    return {
+      protocol,
+      host: normalized.host,
+      port,
+      isIpv6: normalized.isIpv6,
+      hasExplicitPort: port !== defaultPortForProtocol(protocol),
+    };
+  }
+
+  const parsed = new URL(trimmed);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Daemon URL protocol must be http or https");
+  }
+  if (!parsed.hostname) {
+    throw new Error("Daemon URL host is required");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Daemon URL must not include username or password; use the token field");
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("Daemon URL must not include a path, query, or fragment");
+  }
+
+  const protocol = parsed.protocol === "https:" ? "https" : "http";
+  const port = parsed.port
+    ? parsePort(parsed.port, "Invalid daemon URL")
+    : defaultPortForProtocol(protocol);
+  const normalized = normalizeDirectHost(parsed.hostname);
+
+  return {
+    protocol,
+    host: normalized.host,
+    port,
+    isIpv6: normalized.isIpv6,
+    hasExplicitPort: parsed.port.length > 0,
+  };
+}
+
+export function normalizeDaemonHttpEndpoint(input: string): string {
+  return renderDaemonHttpEndpoint(parseDaemonHttpEndpoint(input));
+}
+
+export function redactDaemonHttpEndpointCredentials(input: string): string {
+  return renderDaemonHttpEndpoint(parseDaemonHttpEndpoint(input));
+}
+
 export function deriveLabelFromEndpoint(endpoint: string): string {
   try {
-    const { host } = parseHostPort(endpoint);
+    const { host } = parseDaemonHttpEndpoint(endpoint);
     return host || "Unnamed Host";
   } catch {
     return "Unnamed Host";
@@ -97,11 +197,24 @@ function shouldUseSecureWebSocket(port: number): boolean {
   return port === 443;
 }
 
-export function buildDaemonWebSocketUrl(endpoint: string): string {
-  const { host, port, isIpv6 } = parseHostPort(endpoint);
-  const protocol = shouldUseSecureWebSocket(port) ? "wss" : "ws";
+export function buildDaemonWebSocketUrl(endpoint: string, token?: string | null): string {
+  const {
+    protocol: httpProtocol,
+    host,
+    port,
+    isIpv6,
+    hasExplicitPort,
+  } = parseDaemonHttpEndpoint(endpoint);
+  const protocol = httpProtocol === "https" ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
-  return new URL(`${protocol}://${hostPart}:${port}/ws`).toString();
+  const portPart =
+    hasExplicitPort || port !== defaultPortForProtocol(httpProtocol) ? `:${port}` : "";
+  const url = new URL(`${protocol}://${hostPart}${portPart}/ws`);
+  const authToken = normalizeDaemonAuthToken(token);
+  if (authToken) {
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, authToken);
+  }
+  return url.toString();
 }
 
 export function buildRelayWebSocketUrl(params: {
@@ -109,8 +222,8 @@ export function buildRelayWebSocketUrl(params: {
   serverId: string;
   role: RelayRole;
   /**
-   * Per-connection routing identifier used by the daemon to open server data sockets.
-   * Clients should NOT provide this — the relay assigns a routing ID on connect.
+   * 每条连接的路由标识，用于 daemon 打开服务端数据 socket。
+   * 客户端不应提供该值，relay 会在连接时分配路由 ID。
    */
   connectionId?: string;
   version?: RelayProtocolVersion | 1 | 2;

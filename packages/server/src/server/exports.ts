@@ -1,10 +1,24 @@
-// CLI exports for @getpaseo/server
-export { createPaseoDaemon, type PaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
+// @getpaseo/server 提供给 CLI 的导出
+export {
+  createPaseoDaemon,
+  type PaseoTokenAuthConfig,
+  type PaseoDaemon,
+  type PaseoDaemonConfig,
+} from "./bootstrap.js";
 export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
+export {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  buildDaemonWebSocketUrl,
+  normalizeDaemonHttpEndpoint,
+  normalizeDaemonAuthToken,
+  parseDaemonHttpEndpoint,
+  redactDaemonHttpEndpointCredentials,
+  type DaemonHttpEndpointParts,
+} from "../shared/daemon-endpoints.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
 export {
   DaemonClient,

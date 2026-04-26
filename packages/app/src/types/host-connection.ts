@@ -1,9 +1,14 @@
-import { normalizeHostPort, normalizeLoopbackToLocalhost } from "@server/shared/daemon-endpoints";
+import {
+  normalizeDaemonAuthToken,
+  normalizeDaemonHttpEndpoint,
+  normalizeHostPort,
+} from "@server/shared/daemon-endpoints";
 
 export interface DirectTcpHostConnection {
   id: string;
   type: "directTcp";
   endpoint: string;
+  token?: string;
 }
 
 export interface DirectSocketHostConnection {
@@ -58,7 +63,7 @@ function hostConnectionEquals(left: HostConnection, right: HostConnection): bool
   }
 
   if (left.type === "directTcp" && right.type === "directTcp") {
-    return left.endpoint === right.endpoint;
+    return left.endpoint === right.endpoint && (left.token ?? "") === (right.token ?? "");
   }
   if (left.type === "directSocket" && right.type === "directSocket") {
     return left.path === right.path;
@@ -83,6 +88,11 @@ function hostLifecycleEquals(left: HostLifecycle, right: HostLifecycle): boolean
 function dedupeHostConnections(connections: HostConnection[]): HostConnection[] {
   const next: HostConnection[] = [];
   for (const connection of connections) {
+    const existingIndex = next.findIndex((existing) => existing.id === connection.id);
+    if (existingIndex >= 0) {
+      next[existingIndex] = connection;
+      continue;
+    }
     if (next.some((existing) => hostConnectionEquals(existing, connection))) {
       continue;
     }
@@ -216,7 +226,7 @@ export function connectionFromListen(listen: string): HostConnection | null {
   }
 
   try {
-    const endpoint = normalizeLoopbackToLocalhost(normalizeHostPort(normalizedListen));
+    const endpoint = normalizeDaemonHttpEndpoint(normalizedListen);
     return {
       id: `direct:${endpoint}`,
       type: "directTcp",
@@ -235,10 +245,16 @@ function normalizeStoredConnection(connection: unknown): HostConnection | null {
   const type = typeof record.type === "string" ? record.type : null;
   if (type === "directTcp") {
     try {
-      const endpoint = normalizeLoopbackToLocalhost(
-        normalizeHostPort(String(record.endpoint ?? "")),
+      const endpoint = normalizeDaemonHttpEndpoint(String(record.endpoint ?? ""));
+      const token = normalizeDaemonAuthToken(
+        typeof record.token === "string" ? record.token : undefined,
       );
-      return { id: `direct:${endpoint}`, type: "directTcp", endpoint };
+      return {
+        id: `direct:${endpoint}`,
+        type: "directTcp",
+        endpoint,
+        ...(token ? { token } : {}),
+      };
     } catch {
       return null;
     }

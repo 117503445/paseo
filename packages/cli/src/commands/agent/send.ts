@@ -184,7 +184,7 @@ export async function runSendCommand(
     promptFile: options.promptFile,
   });
 
-  let client;
+  let client: Awaited<ReturnType<typeof connectToDaemon>>;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {

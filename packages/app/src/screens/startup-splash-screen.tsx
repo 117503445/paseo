@@ -37,6 +37,18 @@ const LOGO_SIZE = 96;
 const SHIMMER_PEAK_WIDTH = 120;
 const SHIMMER_DURATION_MS = 1800;
 
+function getLoadingCopy(
+  phase: NonNullable<StartupSplashScreenProps["bootstrapState"]>["phase"] | undefined,
+) {
+  if (phase === "starting-daemon") {
+    return "Starting local server...";
+  }
+  if (phase === "connecting") {
+    return "Connecting to local server...";
+  }
+  return null;
+}
+
 function openGithubIssue(): void {
   void openExternalUrl(GITHUB_ISSUE_URL);
 }
@@ -189,6 +201,13 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     paddingHorizontal: theme.spacing[8],
     paddingVertical: theme.spacing[8],
+    gap: theme.spacing[4],
+  },
+  loadingText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    lineHeight: 22,
+    textAlign: "center",
   },
   errorScreen: {
     position: "relative",
@@ -313,6 +332,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
 
   const isError = bootstrapState?.phase === "error";
+  const loadingCopy = getLoadingCopy(bootstrapState?.phase);
 
   useEffect(() => {
     if (!isError) {
@@ -395,6 +415,7 @@ export function StartupSplashScreen({ bootstrapState }: StartupSplashScreenProps
       <View style={styles.container}>
         <TitlebarDragRegion />
         <LogoShimmer />
+        {loadingCopy ? <Text style={styles.loadingText}>{loadingCopy}</Text> : null}
       </View>
     );
   }

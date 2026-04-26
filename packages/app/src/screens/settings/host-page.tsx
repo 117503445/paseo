@@ -25,6 +25,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
+import { redactDaemonHttpEndpointCredentials } from "@/utils/daemon-endpoints";
 
 const RESTART_CONFIRMATION_MESSAGE =
   "This will restart the daemon. Agents running on it will keep going; the app will reconnect automatically.";
@@ -36,7 +37,7 @@ function formatHostConnectionLabel(connection: HostConnection): string {
   if (connection.type === "directSocket" || connection.type === "directPipe") {
     return `Local (${connection.path})`;
   }
-  return `TCP (${connection.endpoint})`;
+  return `TCP (${redactDaemonHttpEndpointCredentials(connection.endpoint)})`;
 }
 
 function formatActiveConnectionBadge(

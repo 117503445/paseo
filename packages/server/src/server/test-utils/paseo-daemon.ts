@@ -19,6 +19,7 @@ interface TestPaseoDaemonOptions {
   logger?: Parameters<typeof createPaseoDaemon>[1];
   relayEnabled?: boolean;
   relayEndpoint?: string;
+  authToken?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   paseoHomeRoot?: string;
   staticDir?: string;
@@ -147,6 +148,7 @@ async function prepareTestDaemonConfig(
     paseoHome,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
+    authToken: options.authToken,
     mcpEnabled: true,
     staticDir,
     mcpDebug: false,

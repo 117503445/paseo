@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createNodeWebSocketFactory, type NodeWebSocketFactory } from "./node-ws-factory";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
+import { ensureE2EStorageSeeded } from "./app";
 
 export interface TerminalPerfDaemonClient {
   connect(): Promise<void>;
@@ -148,31 +149,29 @@ export async function navigateToTerminal(
   page: Page,
   input: { workspaceId: string; terminalId: string },
 ): Promise<void> {
-  // Boot the app at the workspace route directly.
-  // The fixtures.ts beforeEach addInitScript seeds localStorage on every navigation,
-  // so the daemon registry is already configured when the app starts.
+  // 先打开应用根路由并校验 E2E storage，再直达 workspace route。
+  // 这样前序测试写入的自定义 host registry 不会污染终端用例。
   const workspaceRoute = buildTerminalWorkspaceUrl(input.workspaceId, input.terminalId);
+  await page.goto("/");
+  await ensureE2EStorageSeeded(page);
   await page.goto(workspaceRoute);
 
-  // The workspace layout consumes `?open=...`, returns null during the effect,
-  // then replaces the URL with the clean workspace route after preparing the tab.
-  // On CI, Expo Router's rootNavigationState may take time to initialize,
-  // so we allow a generous timeout here.
+  // workspace layout 会消费 `?open=...`，准备好 tab 后替换成干净 route。
+  // CI 上 Expo Router 的 rootNavigationState 可能初始化较慢，这里保留较宽的超时。
   const cleanWorkspaceRoute = buildWorkspaceUrl(input.workspaceId);
   await page.waitForURL(
     (url) => url.pathname === cleanWorkspaceRoute && !url.searchParams.has("open"),
     { timeout: 30_000 },
   );
 
-  // Wait for daemon connection (sidebar shows host label)
+  // 等待 daemon 连接完成，侧边栏会显示 host label。
   await page
     .getByText("localhost", { exact: true })
     .first()
     .waitFor({ state: "visible", timeout: 30_000 });
 
-  // The open intent should have prepared and focused the exact pre-created terminal tab.
-  // The tab reconciliation effect also auto-creates terminal tabs once hydration completes,
-  // so we give it enough time for the full workspace hydration + tab creation cycle.
+  // open intent 应准备并聚焦到预创建的 terminal tab。
+  // hydration 完成后 tab reconciliation 也会自动创建 terminal tab，因此这里等待完整周期。
   const terminalTab = page.locator(`[data-testid="workspace-tab-terminal_${input.terminalId}"]`);
   await terminalTab.waitFor({ state: "visible", timeout: 30_000 });
   await terminalTab.click();
@@ -180,7 +179,7 @@ export async function navigateToTerminal(
   const terminalSurface = page.locator('[data-testid="terminal-surface"]');
   await terminalSurface.waitFor({ state: "visible", timeout: 15_000 });
 
-  // Wait for loading overlay to disappear (terminal attached)
+  // 等待加载遮罩消失，表示 terminal 已 attach。
   await page
     .locator('[data-testid="terminal-attach-loading"]')
     .waitFor({ state: "hidden", timeout: 10_000 })
