@@ -4,7 +4,6 @@ import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
   CURRENT_RELAY_PROTOCOL_VERSION,
-  extractBasicAuthCredentialsFromEndpoint,
   normalizeDaemonHttpEndpoint,
   normalizeRelayProtocolVersion,
   redactDaemonHttpEndpointCredentials,
@@ -31,16 +30,18 @@ describe("daemon direct HTTP endpoints", () => {
     expect(buildDaemonWebSocketUrl("https://example.com")).toBe("wss://example.com/ws");
   });
 
-  test("extracts and redacts HTTP Basic Auth credentials", () => {
-    expect(extractBasicAuthCredentialsFromEndpoint("http://root:pass@localhost:8080")).toEqual({
-      username: "root",
-      password: "pass",
-    });
-    expect(redactDaemonHttpEndpointCredentials("http://root:pass@localhost:8080")).toBe(
-      "http://root:****@localhost:8080",
+  test("adds direct auth tokens as websocket query parameters", () => {
+    expect(buildDaemonWebSocketUrl("http://localhost:8080", "dev-token")).toBe(
+      "ws://localhost:8080/ws?paseoToken=dev-token",
     );
-    expect(buildDaemonWebSocketUrl("http://root:pass@localhost:8080")).toBe(
-      "ws://root:pass@localhost:8080/ws",
+    expect(redactDaemonHttpEndpointCredentials("http://localhost:8080")).toBe(
+      "http://localhost:8080",
+    );
+  });
+
+  test("rejects username and password in daemon URLs", () => {
+    expect(() => normalizeDaemonHttpEndpoint("http://root:pass@localhost:8080")).toThrow(
+      "Daemon URL must not include username or password",
     );
   });
 });

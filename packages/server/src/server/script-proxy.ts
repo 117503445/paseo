@@ -243,7 +243,7 @@ export function createScriptProxyUpgradeHandler({
       return;
     }
     if (isAuthorized && !isAuthorized(req)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Paseo"\r\n\r\n');
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
     }

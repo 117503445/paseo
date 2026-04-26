@@ -52,6 +52,10 @@ import {
   buildAgentAttentionNotificationPayload,
   findLatestPermissionRequest,
 } from "../shared/agent-attention-notification.js";
+import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
+} from "../shared/daemon-endpoints.js";
 import { createGitHubService, type GitHubService } from "../services/github-service.js";
 
 export interface ExternalSocketMetadata {
@@ -67,10 +71,7 @@ interface PendingConnection {
 interface WebSocketServerConfig {
   allowedOrigins: Set<string>;
   hostnames?: HostnamesConfig;
-  basicAuth?: {
-    username: string;
-    password: string;
-  };
+  authToken?: string;
 }
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -84,47 +85,33 @@ function secureStringEquals(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function parseBasicAuthorizationHeader(
-  value: string | undefined,
-): WebSocketServerConfig["basicAuth"] | null {
-  if (!value) {
-    return null;
-  }
-  const match = value.match(/^Basic\s+(.+)$/i);
-  if (!match) {
-    return null;
-  }
-  let decoded: string;
+function extractHeaderToken(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return normalizeDaemonAuthToken(raw);
+}
+
+function extractQueryToken(rawUrl: string | undefined): string | null {
   try {
-    decoded = Buffer.from(match[1], "base64").toString("utf8");
+    const url = new URL(rawUrl ?? "/", "http://localhost");
+    return normalizeDaemonAuthToken(url.searchParams.get(DAEMON_AUTH_TOKEN_QUERY_PARAM));
   } catch {
     return null;
   }
-  const separatorIndex = decoded.indexOf(":");
-  if (separatorIndex < 0) {
-    return null;
-  }
-  return {
-    username: decoded.slice(0, separatorIndex),
-    password: decoded.slice(separatorIndex + 1),
-  };
 }
 
-function isBasicAuthorizationValid(
-  authorization: string | undefined,
-  basicAuth: WebSocketServerConfig["basicAuth"],
+function isDaemonAuthTokenValid(
+  req: IncomingMessage,
+  authToken: WebSocketServerConfig["authToken"],
 ): boolean {
-  if (!basicAuth) {
+  const expectedToken = normalizeDaemonAuthToken(authToken);
+  if (!expectedToken) {
     return true;
   }
-  const credentials = parseBasicAuthorizationHeader(authorization);
-  if (!credentials) {
+  const token = extractHeaderToken(req.headers["x-paseo-token"]) ?? extractQueryToken(req.url);
+  if (!token) {
     return false;
   }
-  return (
-    secureStringEquals(credentials.username, basicAuth.username) &&
-    secureStringEquals(credentials.password, basicAuth.password)
-  );
+  return secureStringEquals(token, expectedToken);
 }
 
 function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
@@ -617,12 +604,12 @@ export class VoiceAssistantWebSocketServer {
     server: HTTPServer,
     wsConfig: WebSocketServerConfig,
   ): WebSocketServer {
-    const { allowedOrigins, hostnames, basicAuth } = wsConfig;
+    const { allowedOrigins, hostnames, authToken } = wsConfig;
     const wss = new WebSocketServer({
       server,
       path: "/ws",
       verifyClient: ({ req }, callback) => {
-        this.verifyWsClient(req, allowedOrigins, hostnames, basicAuth, callback);
+        this.verifyWsClient(req, allowedOrigins, hostnames, authToken, callback);
       },
     });
     wss.on("connection", (ws, request) => {
@@ -643,7 +630,7 @@ export class VoiceAssistantWebSocketServer {
     req: IncomingMessage,
     allowedOrigins: Set<string>,
     hostnames: HostnamesConfig | undefined,
-    basicAuth: WebSocketServerConfig["basicAuth"],
+    authToken: WebSocketServerConfig["authToken"],
     callback: (res: boolean, code?: number, message?: string) => void,
   ): void {
     const requestMetadata = extractSocketRequestMetadata(req);
@@ -658,7 +645,7 @@ export class VoiceAssistantWebSocketServer {
       callback(false, 403, "Host not allowed");
       return;
     }
-    if (!isBasicAuthorizationValid(req.headers.authorization, basicAuth)) {
+    if (!isDaemonAuthTokenValid(req, authToken)) {
       this.logger.warn(
         { ...requestMetadata, host: requestHost },
         "Rejected unauthenticated connection",

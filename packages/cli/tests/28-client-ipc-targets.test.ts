@@ -50,14 +50,13 @@ console.log("=== CLI IPC Target Helpers ===\n");
 }
 
 {
-  console.log("Test 3c: HTTP daemon URLs map to websocket targets with Basic Auth");
-  const target = resolveDaemonTarget("http://root:pass@localhost:8080");
+  console.log("Test 3c: HTTP daemon URLs map to websocket targets with token query");
+  const target = resolveDaemonTarget("http://localhost:8080", "dev-token");
   assert.deepStrictEqual(target, {
     type: "tcp",
-    url: "ws://root:pass@localhost:8080/ws",
-    authHeader: "Basic cm9vdDpwYXNz",
+    url: "ws://localhost:8080/ws?paseoToken=dev-token",
   });
-  console.log("✓ HTTP daemon URLs map to websocket targets with Basic Auth\n");
+  console.log("✓ HTTP daemon URLs map to websocket targets with token query\n");
 }
 
 {

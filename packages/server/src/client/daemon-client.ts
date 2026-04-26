@@ -191,7 +191,6 @@ export interface DaemonClientConfig {
   clientType?: "mobile" | "browser" | "cli" | "mcp";
   appVersion?: string;
   runtimeGeneration?: number | null;
-  authHeader?: string;
   suppressSendErrors?: boolean;
   transportFactory?: DaemonTransportFactory;
   webSocketFactory?: WebSocketFactory;
@@ -775,9 +774,6 @@ export class DaemonClient {
     }
 
     const headers: Record<string, string> = {};
-    if (this.config.authHeader) {
-      headers["Authorization"] = this.config.authHeader;
-    }
 
     try {
       // Reconnect can overlap with browser close/error delivery ordering.

@@ -1,10 +1,10 @@
-import { Buffer } from "buffer";
 import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl as buildSharedRelayWebSocketUrl,
   deriveLabelFromEndpoint,
-  extractBasicAuthCredentialsFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonAuthToken,
   normalizeDaemonHttpEndpoint,
   normalizeHostPort,
   parseDaemonHttpEndpoint,
@@ -16,10 +16,11 @@ import {
 export type { HostPortParts };
 
 export {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
   buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
-  extractBasicAuthCredentialsFromEndpoint,
   extractHostPortFromWebSocketUrl,
+  normalizeDaemonAuthToken,
   normalizeDaemonHttpEndpoint,
   normalizeHostPort,
   parseDaemonHttpEndpoint,
@@ -40,15 +41,4 @@ export function decodeOfferFragmentPayload(encoded: string): unknown {
 
 export function buildRelayWebSocketUrl(params: { endpoint: string; serverId: string }): string {
   return buildSharedRelayWebSocketUrl({ ...params, role: "client" });
-}
-
-export function buildBasicAuthHeaderFromEndpoint(endpoint: string): string | null {
-  const credentials = extractBasicAuthCredentialsFromEndpoint(endpoint);
-  if (!credentials) {
-    return null;
-  }
-  const token = Buffer.from(`${credentials.username}:${credentials.password}`, "utf8").toString(
-    "base64",
-  );
-  return `Basic ${token}`;
 }

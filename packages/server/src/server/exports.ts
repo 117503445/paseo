@@ -1,7 +1,7 @@
 // @getpaseo/server 提供给 CLI 的导出
 export {
   createPaseoDaemon,
-  type PaseoBasicAuthConfig,
+  type PaseoTokenAuthConfig,
   type PaseoDaemon,
   type PaseoDaemonConfig,
 } from "./bootstrap.js";
@@ -11,12 +11,12 @@ export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 export {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
   buildDaemonWebSocketUrl,
-  extractBasicAuthCredentialsFromEndpoint,
   normalizeDaemonHttpEndpoint,
+  normalizeDaemonAuthToken,
   parseDaemonHttpEndpoint,
   redactDaemonHttpEndpointCredentials,
-  type BasicAuthCredentials,
   type DaemonHttpEndpointParts,
 } from "../shared/daemon-endpoints.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";

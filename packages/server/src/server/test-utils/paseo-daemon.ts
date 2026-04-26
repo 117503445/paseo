@@ -5,7 +5,6 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import pino from "pino";
 import {
   createPaseoDaemon,
-  type PaseoBasicAuthConfig,
   type PaseoDaemonConfig,
   type PaseoOpenAIConfig,
   type PaseoSpeechConfig,
@@ -20,7 +19,7 @@ interface TestPaseoDaemonOptions {
   logger?: Parameters<typeof createPaseoDaemon>[1];
   relayEnabled?: boolean;
   relayEndpoint?: string;
-  basicAuth?: PaseoBasicAuthConfig;
+  authToken?: string;
   agentClients?: Partial<Record<AgentProvider, AgentClient>>;
   paseoHomeRoot?: string;
   staticDir?: string;
@@ -149,7 +148,7 @@ async function prepareTestDaemonConfig(
     paseoHome,
     corsAllowedOrigins: options.corsAllowedOrigins ?? [],
     hostnames: true,
-    basicAuth: options.basicAuth,
+    authToken: options.authToken,
     mcpEnabled: true,
     staticDir,
     mcpDebug: false,

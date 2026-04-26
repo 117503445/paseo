@@ -12,6 +12,18 @@ export interface ModelListItem {
   thinkingOptions: string;
 }
 
+interface ProviderThinkingOption {
+  id: string;
+}
+
+interface ProviderModel {
+  label: string;
+  id: string;
+  description?: string | null;
+  thinkingOptions?: ProviderThinkingOption[] | null;
+  defaultThinkingOptionId?: string | null;
+}
+
 /** Schema for provider models output */
 export const providerModelsSchema: OutputSchema<ModelListItem> = {
   idField: "id",
@@ -61,14 +73,17 @@ export async function runModelsCommand(
       };
     }
 
-    const models: ModelListItem[] = (result.models ?? []).map((m) => ({
-      model: m.label,
-      id: m.id,
-      description: m.description ?? "",
-      thinkingOptionIds: (m.thinkingOptions ?? []).map((option) => option.id),
-      defaultThinkingOptionId: m.defaultThinkingOptionId ?? null,
-      thinkingOptions: (m.thinkingOptions ?? []).map((option) => option.id).join(", ") || "none",
-    }));
+    const models: ModelListItem[] = ((result.models ?? []) as ProviderModel[]).map((model) => {
+      const thinkingOptions = model.thinkingOptions ?? [];
+      return {
+        model: model.label,
+        id: model.id,
+        description: model.description ?? "",
+        thinkingOptionIds: thinkingOptions.map((option) => option.id),
+        defaultThinkingOptionId: model.defaultThinkingOptionId ?? null,
+        thinkingOptions: thinkingOptions.map((option) => option.id).join(", ") || "none",
+      };
+    });
 
     return {
       type: "list",

@@ -1,5 +1,6 @@
 import {
-  extractBasicAuthCredentialsFromEndpoint,
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
   parseDaemonHttpEndpoint,
 } from "@server/shared/daemon-endpoints";
 import type { WorkspaceScriptPayload } from "@server/shared/messages";
@@ -27,16 +28,15 @@ function buildDirectServiceUrl(endpoint: string, port: number): string | null {
   }
 }
 
-function buildProxyOpenUrl(proxyUrl: string, endpoint: string): string {
-  const credentials = extractBasicAuthCredentialsFromEndpoint(endpoint);
-  if (!credentials) {
+function buildProxyOpenUrl(proxyUrl: string, token?: string): string {
+  const authToken = normalizeDaemonAuthToken(token);
+  if (!authToken) {
     return proxyUrl;
   }
 
   try {
     const url = new URL(proxyUrl);
-    url.username = credentials.username;
-    url.password = credentials.password;
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, authToken);
     return url.toString();
   } catch {
     return proxyUrl;
@@ -71,7 +71,7 @@ export function resolveWorkspaceScriptLink(input: {
         return { openUrl: null, labelUrl: null };
       }
       return {
-        openUrl: buildProxyOpenUrl(script.proxyUrl, activeConnection.endpoint),
+        openUrl: buildProxyOpenUrl(script.proxyUrl, activeConnection.token),
         labelUrl: script.proxyUrl,
       };
     }

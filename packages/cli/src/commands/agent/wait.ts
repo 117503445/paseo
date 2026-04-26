@@ -151,7 +151,7 @@ export async function runWaitCommand(
 
   const { timeoutMs, timeoutLabel } = parseWaitTimeout(options.timeout);
 
-  let client;
+  let client: Awaited<ReturnType<typeof connectToDaemon>>;
   try {
     client = await connectToDaemon({ host: options.host as string | undefined });
   } catch (err) {

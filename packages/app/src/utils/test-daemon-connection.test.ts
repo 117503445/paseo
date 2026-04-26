@@ -4,7 +4,6 @@ const daemonClientMock = vi.hoisted(() => {
   const createdConfigs: Array<{
     clientId?: string;
     url?: string;
-    authHeader?: string;
   }> = [];
 
   class MockDaemonClient {
@@ -120,17 +119,19 @@ describe("test-daemon-connection connectToDaemon", () => {
     );
   });
 
-  it("uses direct URL credentials for HTTP Basic Auth", async () => {
+  it("adds direct connection tokens to the websocket URL", async () => {
     const mod = await import("./test-daemon-connection");
 
     const result = await mod.connectToDaemon({
-      id: "direct:http://root:pass@localhost:8080",
+      id: "direct:http://localhost:8080",
       type: "directTcp",
-      endpoint: "http://root:pass@localhost:8080",
+      endpoint: "http://localhost:8080",
+      token: "dev-token",
     });
     await result.client.close();
 
-    expect(daemonClientMock.createdConfigs[0]?.url).toBe("ws://root:pass@localhost:8080/ws");
-    expect(daemonClientMock.createdConfigs[0]?.authHeader).toBe("Basic cm9vdDpwYXNz");
+    expect(daemonClientMock.createdConfigs[0]?.url).toBe(
+      "ws://localhost:8080/ws?paseoToken=dev-token",
+    );
   });
 });

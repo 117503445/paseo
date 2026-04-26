@@ -11,7 +11,7 @@ describe("direct TCP host connections", () => {
     });
   });
 
-  it("upgrades stored host:port endpoints while preserving Basic Auth URLs", () => {
+  it("upgrades stored host:port endpoints and preserves direct tokens", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_test",
       label: "Test",
@@ -24,7 +24,8 @@ describe("direct TCP host connections", () => {
         {
           id: "direct:secure",
           type: "directTcp",
-          endpoint: "https://root:pass@example.com",
+          endpoint: "https://example.com",
+          token: "dev-token",
         },
       ],
     });
@@ -36,9 +37,10 @@ describe("direct TCP host connections", () => {
         endpoint: "http://localhost:6767",
       },
       {
-        id: "direct:https://root:pass@example.com",
+        id: "direct:https://example.com",
         type: "directTcp",
-        endpoint: "https://root:pass@example.com",
+        endpoint: "https://example.com",
+        token: "dev-token",
       },
     ]);
   });

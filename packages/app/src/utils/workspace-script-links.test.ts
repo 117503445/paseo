@@ -67,15 +67,16 @@ describe("resolveWorkspaceScriptLink", () => {
     });
   });
 
-  it("injects Basic Auth credentials only into proxy open URLs", () => {
+  it("adds direct tokens only into proxy open URLs", () => {
     expect(
       resolveLink({
         type: "directTcp",
-        endpoint: "http://root:pass@localhost:6767",
-        display: "http://root:****@localhost:6767",
+        endpoint: "http://localhost:6767",
+        display: "http://localhost:6767",
+        token: "dev-token",
       }),
     ).toEqual({
-      openUrl: "http://root:pass@web.feature.paseo.localhost:6767/",
+      openUrl: "http://web.feature.paseo.localhost:6767/?paseoToken=dev-token",
       labelUrl: "http://web.feature.paseo.localhost:6767",
     });
   });

@@ -7,6 +7,7 @@ import { WebSocket } from "ws";
 
 import { DaemonClient } from "../client/daemon-client.js";
 import type { WebSocketLike } from "../client/daemon-client.js";
+import { DAEMON_AUTH_TOKEN_QUERY_PARAM } from "../shared/daemon-endpoints.js";
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { generateLocalPairingOffer } from "./pairing-offer.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -47,18 +48,29 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("requires Basic Auth for direct HTTP and websocket access when configured", async () => {
+  test("requires token auth for direct HTTP and websocket access when configured", async () => {
     const daemonHandle = await createTestPaseoDaemon({
-      basicAuth: { username: "root", password: "pass" },
+      authToken: "dev-token",
+      corsAllowedOrigins: ["https://paseo.cloud.117503445.top"],
     });
-    const authHeader = `Basic ${Buffer.from("root:pass", "utf8").toString("base64")}`;
     try {
+      const preflight = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://paseo.cloud.117503445.top",
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Private-Network": "true",
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get("access-control-allow-private-network")).toBe("true");
+
       const unauthenticatedHealth = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`);
       expect(unauthenticatedHealth.status).toBe(401);
 
-      const authenticatedHealth = await fetch(`http://127.0.0.1:${daemonHandle.port}/api/health`, {
-        headers: { Authorization: authHeader },
-      });
+      const authenticatedHealth = await fetch(
+        `http://127.0.0.1:${daemonHandle.port}/api/health?${DAEMON_AUTH_TOKEN_QUERY_PARAM}=dev-token`,
+      );
       expect(authenticatedHealth.ok).toBe(true);
 
       const unauthenticatedClient = new DaemonClient({
@@ -72,9 +84,8 @@ describe("paseo daemon bootstrap", () => {
       await unauthenticatedClient.close().catch(() => undefined);
 
       const authenticatedClient = new DaemonClient({
-        url: `ws://127.0.0.1:${daemonHandle.port}/ws`,
+        url: `ws://127.0.0.1:${daemonHandle.port}/ws?${DAEMON_AUTH_TOKEN_QUERY_PARAM}=dev-token`,
         clientId: "cid_basic_auth_ok",
-        authHeader,
         webSocketFactory: nodeWebSocketFactory,
         reconnect: { enabled: false },
         connectTimeoutMs: 1000,

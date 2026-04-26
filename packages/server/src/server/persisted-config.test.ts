@@ -3,19 +3,17 @@ import { describe, expect, test } from "vitest";
 import { PersistedConfigSchema } from "./persisted-config.js";
 
 describe("PersistedConfigSchema agent provider runtime settings", () => {
-  test("accepts daemon Basic Auth config", () => {
+  test("accepts daemon token auth config", () => {
     const parsed = PersistedConfigSchema.parse({
       daemon: {
         auth: {
-          username: "root",
-          password: "pass",
+          token: "dev-token",
         },
       },
     });
 
     expect(parsed.daemon?.auth).toEqual({
-      username: "root",
-      password: "pass",
+      token: "dev-token",
     });
   });
 

@@ -118,6 +118,10 @@ import { createTerminalManager, type TerminalManager } from "../terminal/termina
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import {
+  DAEMON_AUTH_TOKEN_QUERY_PARAM,
+  normalizeDaemonAuthToken,
+} from "../shared/daemon-endpoints.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
@@ -141,24 +145,22 @@ function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
-function encodeUserInfoPart(value: string): string {
-  return encodeURIComponent(value);
-}
-
 function createAgentMcpBaseUrl(
   listenTarget: ListenTarget | null,
-  basicAuth: PaseoBasicAuthConfig | undefined,
+  authToken: string | undefined,
 ): string | null {
   if (!listenTarget || listenTarget.type !== "tcp") {
     return null;
   }
-  const authPart = basicAuth
-    ? `${encodeUserInfoPart(basicAuth.username)}:${encodeUserInfoPart(basicAuth.password)}@`
-    : "";
-  return new URL(
+  const url = new URL(
     "/mcp/agents",
-    `http://${authPart}${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
-  ).toString();
+    `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
+  );
+  const normalizedToken = normalizeDaemonAuthToken(authToken);
+  if (normalizedToken) {
+    url.searchParams.set(DAEMON_AUTH_TOKEN_QUERY_PARAM, normalizedToken);
+  }
+  return url.toString();
 }
 
 function secureStringEquals(left: string, right: string): boolean {
@@ -170,62 +172,49 @@ function secureStringEquals(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function parseBasicAuthorizationHeader(value: string | undefined): PaseoBasicAuthConfig | null {
-  if (!value) {
-    return null;
-  }
-  const match = value.match(/^Basic\s+(.+)$/i);
-  if (!match) {
-    return null;
-  }
+function extractHeaderToken(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return normalizeDaemonAuthToken(raw);
+}
 
-  let decoded: string;
+function extractQueryToken(rawUrl: string | undefined): string | null {
   try {
-    decoded = Buffer.from(match[1], "base64").toString("utf8");
+    const url = new URL(rawUrl ?? "/", "http://localhost");
+    return normalizeDaemonAuthToken(url.searchParams.get(DAEMON_AUTH_TOKEN_QUERY_PARAM));
   } catch {
     return null;
   }
-
-  const separatorIndex = decoded.indexOf(":");
-  if (separatorIndex < 0) {
-    return null;
-  }
-  return {
-    username: decoded.slice(0, separatorIndex),
-    password: decoded.slice(separatorIndex + 1),
-  };
 }
 
-function isBasicAuthorizationValid(
-  authorization: string | undefined,
-  basicAuth: PaseoBasicAuthConfig | undefined,
+function extractDaemonAuthToken(req: IncomingMessage | express.Request): string | null {
+  return extractHeaderToken(req.headers["x-paseo-token"]) ?? extractQueryToken(req.url);
+}
+
+function isDaemonAuthTokenValid(
+  req: IncomingMessage | express.Request,
+  authToken: string | undefined,
 ): boolean {
-  if (!basicAuth) {
+  const expectedToken = normalizeDaemonAuthToken(authToken);
+  if (!expectedToken) {
     return true;
   }
-  const credentials = parseBasicAuthorizationHeader(authorization);
-  if (!credentials) {
+  const token = extractDaemonAuthToken(req);
+  if (!token) {
     return false;
   }
-  return (
-    secureStringEquals(credentials.username, basicAuth.username) &&
-    secureStringEquals(credentials.password, basicAuth.password)
-  );
+  return secureStringEquals(token, expectedToken);
 }
 
-function createBasicAuthMiddleware(
-  basicAuth: PaseoBasicAuthConfig | undefined,
-): express.RequestHandler {
+function createTokenAuthMiddleware(authToken: string | undefined): express.RequestHandler {
   return (req, res, next) => {
-    if (!basicAuth || req.method === "OPTIONS") {
+    if (!normalizeDaemonAuthToken(authToken) || req.method === "OPTIONS") {
       next();
       return;
     }
-    if (isBasicAuthorizationValid(req.header("authorization"), basicAuth)) {
+    if (isDaemonAuthTokenValid(req, authToken)) {
       next();
       return;
     }
-    res.setHeader("WWW-Authenticate", 'Basic realm="Paseo"');
     res.status(401).json({ error: "Unauthorized" });
   };
 }
@@ -238,9 +227,8 @@ export interface PaseoSpeechConfig {
   local?: PaseoLocalSpeechConfig;
 }
 
-export interface PaseoBasicAuthConfig {
-  username: string;
-  password: string;
+export interface PaseoTokenAuthConfig {
+  token: string;
 }
 
 export type DaemonLifecycleIntent =
@@ -262,7 +250,7 @@ export interface PaseoDaemonConfig {
   corsAllowedOrigins: string[];
   allowedHosts?: HostnamesConfig;
   hostnames?: HostnamesConfig;
-  basicAuth?: PaseoBasicAuthConfig;
+  authToken?: string;
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   staticDir: string;
@@ -397,8 +385,11 @@ export async function createPaseoDaemon(
     if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Paseo-Token");
       res.setHeader("Access-Control-Allow-Credentials", "true");
+      if (req.headers["access-control-request-private-network"] === "true") {
+        res.setHeader("Access-Control-Allow-Private-Network", "true");
+      }
     }
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -407,9 +398,9 @@ export async function createPaseoDaemon(
     next();
   });
 
-  app.use(createBasicAuthMiddleware(config.basicAuth));
+  app.use(createTokenAuthMiddleware(config.authToken));
 
-  // 脚本代理放在鉴权之后，避免启用 Basic Auth 时绕过 daemon 入口保护。
+  // 脚本代理放在鉴权之后，避免启用 token 时绕过 daemon 入口保护。
   app.use(createScriptProxyMiddleware({ routeStore: scriptRouteStore, logger }));
 
   // Serve static files from public directory
@@ -491,7 +482,7 @@ export async function createPaseoDaemon(
   const scriptProxyUpgradeHandler = createScriptProxyUpgradeHandler({
     routeStore: scriptRouteStore,
     logger,
-    isAuthorized: (req) => isBasicAuthorizationValid(req.headers.authorization, config.basicAuth),
+    isAuthorized: (req) => isDaemonAuthTokenValid(req, config.authToken),
   });
   httpServer.on("upgrade", scriptProxyUpgradeHandler);
 
@@ -790,7 +781,7 @@ export async function createPaseoDaemon(
         const logAndResolve = async () => {
           boundListenTarget = resolveBoundListenTarget(listenTarget, httpServer);
           const mcpBaseUrl = mcpEnabled
-            ? createAgentMcpBaseUrl(boundListenTarget, config.basicAuth)
+            ? createAgentMcpBaseUrl(boundListenTarget, config.authToken)
             : null;
           agentMcpBaseUrl = config.mcpInjectIntoAgents === false ? null : mcpBaseUrl;
           agentManager.setMcpBaseUrl(agentMcpBaseUrl);
@@ -828,7 +819,7 @@ export async function createPaseoDaemon(
             config.paseoHome,
             daemonConfigStore,
             mcpBaseUrl,
-            { allowedOrigins, hostnames: configuredHostnames, basicAuth: config.basicAuth },
+            { allowedOrigins, hostnames: configuredHostnames, authToken: config.authToken },
             speechService,
             terminalManager,
             {

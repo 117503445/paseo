@@ -6,6 +6,7 @@ import { Link2 } from "lucide-react-native";
 import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import {
+  normalizeDaemonAuthToken,
   normalizeDaemonHttpEndpoint,
   redactDaemonHttpEndpointCredentials,
 } from "@/utils/daemon-endpoints";
@@ -148,14 +149,18 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const isMobile = useIsCompactFormFactor();
 
   const hostInputRef = useRef<TextInput>(null);
+  const tokenInputRef = useRef<TextInput>(null);
   const endpointRawRef = useRef("");
+  const tokenRawRef = useRef("");
 
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const clearInput = useCallback(() => {
     endpointRawRef.current = "";
+    tokenRawRef.current = "";
     hostInputRef.current?.clear();
+    tokenInputRef.current?.clear();
   }, []);
 
   const connectIcon = useMemo(
@@ -181,6 +186,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     if (isSaving) return;
 
     const raw = endpointRawRef.current.trim();
+    const token = normalizeDaemonAuthToken(tokenRawRef.current);
     if (!raw) {
       setErrorMessage("Host is required");
       return;
@@ -202,12 +208,14 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
         id: "probe",
         type: "directTcp",
         endpoint,
+        ...(token ? { token } : {}),
       });
       await client.close().catch(() => undefined);
       const isNewHost = !daemons.some((daemon) => daemon.serverId === serverId);
       const profile = await upsertDirectConnection({
         serverId,
         endpoint,
+        ...(token ? { token } : {}),
         label: hostname ?? undefined,
       });
 
@@ -226,7 +234,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       }
       setErrorMessage(combined);
       if (!isMobile) {
-        // Desktop/web: also surface it as a dialog for quick visibility.
+        // 桌面和 Web 上同时弹窗，便于快速看到失败原因。
         Alert.alert("Connection failed", combined);
       }
     } finally {
@@ -236,6 +244,10 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
 
   const handleChangeEndpoint = useCallback((next: string) => {
     endpointRawRef.current = next;
+  }, []);
+
+  const handleChangeToken = useCallback((next: string) => {
+    tokenRawRef.current = next;
   }, []);
 
   const handleSubmitEditing = useCallback(() => {
@@ -271,6 +283,26 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
           keyboardType="url"
           editable={!isSaving}
           returnKeyType="done"
+          onSubmitEditing={handleSubmitEditing}
+        />
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.label}>Token</Text>
+        <AdaptiveTextInput
+          ref={tokenInputRef}
+          testID="direct-token-input"
+          nativeID="direct-token-input"
+          accessibilityLabel="direct-token-input"
+          onChangeText={handleChangeToken}
+          placeholder="Optional"
+          placeholderTextColor={theme.colors.foregroundMuted}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isSaving}
+          returnKeyType="done"
+          secureTextEntry
           onSubmitEditing={handleSubmitEditing}
         />
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}

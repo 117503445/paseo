@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { Buffer } from "node:buffer";
 import {
   buildDaemonWebSocketUrl,
-  extractBasicAuthCredentialsFromEndpoint,
   loadConfig,
+  normalizeDaemonAuthToken,
   resolvePaseoHome,
   DaemonClient,
 } from "@getpaseo/server";
@@ -25,7 +24,6 @@ type DaemonTarget =
   | {
       type: "tcp";
       url: string;
-      authHeader?: string;
     }
   | {
       type: "ipc";
@@ -33,20 +31,8 @@ type DaemonTarget =
       socketPath: string;
     };
 
-function buildBasicAuthHeader(credentials: { username: string; password: string }): string {
-  const token = Buffer.from(`${credentials.username}:${credentials.password}`, "utf8").toString(
-    "base64",
-  );
-  return `Basic ${token}`;
-}
-
-function resolveEnvBasicAuthHeader(env: NodeJS.ProcessEnv = process.env): string | null {
-  const username = env.PASEO_AUTH_USERNAME?.trim();
-  const password = env.PASEO_AUTH_PASSWORD;
-  if (!username || !password) {
-    return null;
-  }
-  return buildBasicAuthHeader({ username, password });
+function resolveEnvAuthToken(env: NodeJS.ProcessEnv = process.env): string | null {
+  return normalizeDaemonAuthToken(env.PASEO_AUTH_TOKEN);
 }
 
 /**
@@ -171,7 +157,7 @@ function stripIpcPrefix(trimmed: string): string {
   return trimmed;
 }
 
-export function resolveDaemonTarget(host: string): DaemonTarget {
+export function resolveDaemonTarget(host: string, token?: string | null): DaemonTarget {
   const trimmed = host.trim();
   if (
     trimmed.startsWith("unix://") ||
@@ -190,11 +176,9 @@ export function resolveDaemonTarget(host: string): DaemonTarget {
     };
   }
 
-  const credentials = extractBasicAuthCredentialsFromEndpoint(trimmed);
   return {
     type: "tcp",
-    url: buildDaemonWebSocketUrl(trimmed),
-    ...(credentials ? { authHeader: buildBasicAuthHeader(credentials) } : {}),
+    url: buildDaemonWebSocketUrl(trimmed, token),
   };
 }
 
@@ -226,15 +210,12 @@ async function tryConnectHost(
   timeout: number,
   nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
 ): Promise<{ client: DaemonClient } | { error: unknown }> {
-  const target = resolveDaemonTarget(host);
-  const authHeader =
-    target.type === "tcp" ? (target.authHeader ?? resolveEnvBasicAuthHeader()) : undefined;
+  const target = resolveDaemonTarget(host, resolveEnvAuthToken());
   const client = new DaemonClient({
     url: target.url,
     clientId,
     clientType: "cli",
     appVersion: resolveCliVersion(),
-    ...(authHeader ? { authHeader } : {}),
     connectTimeoutMs: timeout,
     webSocketFactory: (url: string, config?: { headers?: Record<string, string> }) =>
       nodeWebSocketFactory(url, {
