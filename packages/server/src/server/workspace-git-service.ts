@@ -1536,7 +1536,7 @@ async function loadWorkspaceGitRuntimeSnapshot(
     git: {
       isGit: true,
       repoRoot: checkoutStatus.repoRoot,
-      mainRepoRoot: checkoutStatus.mainRepoRoot,
+      mainRepoRoot: checkoutStatus.mainRepoRoot ?? null,
       currentBranch: checkoutStatus.currentBranch,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,

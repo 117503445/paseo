@@ -202,6 +202,13 @@ function resolveOptionalPaseoHomeEnv(value: string | undefined): string | null {
   return resolvePaseoHomePath(trimmed);
 }
 
+function isExplicitlyDisabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no"
+  );
+}
+
 interface OfferPayload {
   v: 2;
   serverId: string;
@@ -373,6 +380,14 @@ async function applyPaseoHomeFork(targetHome: string): Promise<void> {
 }
 
 async function resolveDictationConfig(): Promise<DictationConfig> {
+  if (
+    isExplicitlyDisabled(process.env.PASEO_DICTATION_ENABLED) &&
+    isExplicitlyDisabled(process.env.PASEO_VOICE_MODE_ENABLED)
+  ) {
+    console.log("[e2e] Dictation and voice mode disabled by environment");
+    return { openAiUsable: false, localModelsDir: null };
+  }
+
   const openAiUsable = await isOpenAiApiKeyUsable(process.env.OPENAI_API_KEY);
   const defaultLocalModelsDir = path.join(
     process.env.HOME ?? "",
