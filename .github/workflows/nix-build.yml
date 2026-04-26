@@ -2,13 +2,14 @@ name: Nix Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/nix-build.yml"
       - "packages/highlight/**"
       - "packages/server/**"
       - "packages/relay/**"
@@ -21,6 +22,7 @@ on:
       - "flake.lock"
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/nix-build.yml"
       - "packages/highlight/**"
       - "packages/server/**"
       - "packages/relay/**"
