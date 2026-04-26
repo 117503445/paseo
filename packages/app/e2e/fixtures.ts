@@ -1,7 +1,7 @@
 import { test as base, expect, type Page } from "@playwright/test";
 import { buildCreateAgentPreferences, buildSeededHost } from "./helpers/daemon-registry";
 
-// Extend base test to provide dynamic baseURL from global-setup
+// 扩展 base test，让 global-setup 提供动态 baseURL。
 const test = base.extend({
   baseURL: async ({}, provide) => {
     const metroPort = process.env.E2E_METRO_PORT;
@@ -35,8 +35,8 @@ test.beforeEach(async ({ page }) => {
     );
   }
 
-  // Hard guardrail: never allow tests to hit the developer's default daemon.
-  // This blocks both HTTP and WS attempts to :6767 (before any navigation).
+  // 硬性保护：测试绝不能访问开发者默认 daemon。
+  // 在任何导航前阻断所有指向 :6767 的 HTTP 和 WS 请求。
   await page.route(/:(6767)\b/, (route) => route.abort());
   await page.routeWebSocket(/:(6767)\b/, async (ws) => {
     await ws.close({ code: 1008, reason: "Blocked connection to localhost:6767 during e2e." });
@@ -68,9 +68,10 @@ test.beforeEach(async ({ page }) => {
 
   await page.addInitScript(
     ({ daemon, preferences, seedNonce: nonce }) => {
-      // `addInitScript` runs on every navigation (including reloads). Some tests intentionally
-      // override storage and reload; they can opt out of seeding for the *next* navigation by
-      // setting this flag before the reload.
+      localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
+
+      // `addInitScript` 会在每次导航时运行，包括 reload。有些测试会主动覆盖存储并 reload；
+      // 这些测试可以在 reload 前设置这个标记，让下一次导航跳过默认 seed。
       const disableOnceKey = "@paseo:e2e-disable-default-seed-once";
       const disableValue = localStorage.getItem(disableOnceKey);
       if (disableValue) {
@@ -81,9 +82,8 @@ test.beforeEach(async ({ page }) => {
       }
 
       localStorage.setItem("@paseo:e2e", "1");
-      localStorage.setItem("@paseo:e2e-seed-nonce", nonce);
 
-      // Hard-reset anything that could point to a developer's real daemon.
+      // 硬重置所有可能指向开发者真实 daemon 的存储。
       localStorage.setItem("@paseo:daemon-registry", JSON.stringify([daemon]));
       localStorage.removeItem("@paseo:settings");
       localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(preferences));

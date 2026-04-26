@@ -24,19 +24,48 @@ interface TerminalLayoutMetrics {
 async function readTerminalLayoutMetrics(page: Page): Promise<TerminalLayoutMetrics> {
   const tabIds = await getTabTestIds(page);
   return page.evaluate((currentTabIds) => {
+    function visibleRect(element: Element | null): DOMRect | null {
+      const rect = element?.getBoundingClientRect() ?? null;
+      if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+      return rect;
+    }
+
+    function largestVisibleCanvasRect(root: HTMLElement | null): DOMRect | null {
+      let largest: DOMRect | null = null;
+      for (const canvas of Array.from(root?.querySelectorAll<HTMLCanvasElement>("canvas") ?? [])) {
+        const rect = visibleRect(canvas);
+        if (!rect) continue;
+        if (!largest || rect.width * rect.height > largest.width * largest.height) {
+          largest = rect;
+        }
+      }
+      return largest;
+    }
+
+    function rowHeightFromDomRows(rows: HTMLElement[]): number {
+      const firstRow = rows[0] ?? null;
+      const lastRow = rows.at(-1) ?? null;
+      const firstRowRect = visibleRect(firstRow);
+      const lastRowRect = visibleRect(lastRow);
+      if (!firstRowRect || !lastRowRect) return 0;
+      return Math.max(0, lastRowRect.bottom - firstRowRect.top);
+    }
+
+    function rowCountForRenderer(domRowCount: number, xtermRows: number | undefined): number {
+      if (domRowCount > 0) return domRowCount;
+      return typeof xtermRows === "number" ? xtermRows : 0;
+    }
+
     const visibleSurfaces = Array.from(
       document.querySelectorAll<HTMLElement>('[data-testid="terminal-surface"]'),
-    ).filter((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    });
+    ).filter((candidate) => visibleRect(candidate));
     const surface = visibleSurfaces[0] ?? null;
-    const renderedRows = Array.from(document.querySelectorAll<HTMLElement>(".xterm-rows > div"));
-    const firstRow = renderedRows[0] ?? null;
-    const lastRow = renderedRows.at(-1) ?? null;
-    const surfaceRect = surface?.getBoundingClientRect() ?? null;
-    const firstRowRect = firstRow?.getBoundingClientRect() ?? null;
-    const lastRowRect = lastRow?.getBoundingClientRect() ?? null;
+    const renderedRows = surface
+      ? Array.from(surface.querySelectorAll<HTMLElement>(".xterm-rows > div"))
+      : [];
+    const surfaceRect = visibleRect(surface);
+    const screenRect = visibleRect(surface?.querySelector<HTMLElement>(".xterm-screen") ?? null);
+    const canvasRect = largestVisibleCanvasRect(surface);
     const term = (
       window as Window & {
         __paseoTerminal?: {
@@ -45,15 +74,16 @@ async function readTerminalLayoutMetrics(page: Page): Promise<TerminalLayoutMetr
         };
       }
     ).__paseoTerminal;
+    const domRowsHeight = rowHeightFromDomRows(renderedRows);
+    const renderedRowsHeight = domRowsHeight || canvasRect?.height || screenRect?.height || 0;
 
     return {
       visibleSurfaceCount: visibleSurfaces.length,
       surfaceHeight: surfaceRect?.height ?? 0,
-      rowCount: renderedRows.length,
+      rowCount: rowCountForRenderer(renderedRows.length, term?.rows),
       rows: typeof term?.rows === "number" ? term.rows : null,
       cols: typeof term?.cols === "number" ? term.cols : null,
-      renderedRowsHeight:
-        firstRowRect && lastRowRect ? Math.max(0, lastRowRect.bottom - firstRowRect.top) : 0,
+      renderedRowsHeight,
       tabIds: currentTabIds,
     };
   }, tabIds);

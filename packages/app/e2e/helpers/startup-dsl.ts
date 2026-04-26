@@ -1,8 +1,6 @@
 import { expect, type Page } from "../fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "./daemon-registry";
 
-const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
-const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 const REGISTRY_KEY = "@paseo:daemon-registry";
 const E2E_KEY = "@paseo:e2e";
 
@@ -87,9 +85,6 @@ class StartupScenario {
       return;
     }
 
-    // Let the shared fixture create its seed nonce, then opt out of that seed for
-    // the next navigation so this scenario owns the stored host registry.
-    await this.page.goto("/");
     const nowIso = new Date().toISOString();
     const registry = this.savedHosts.map((host) =>
       buildStoredHost({
@@ -105,24 +100,16 @@ class StartupScenario {
     }
     const createAgentPreferences = buildStoredCreateAgentPreferences(firstHost.serverId);
 
-    await this.page.evaluate(
+    await this.page.addInitScript(
       ({ keys, registry: storedRegistry, createAgentPreferences: storedPreferences }) => {
-        const nonce = localStorage.getItem(keys.seedNonce);
-        if (!nonce) {
-          throw new Error("Expected e2e seed nonce before overriding startup registry.");
-        }
-
         localStorage.setItem(keys.e2e, "1");
         localStorage.setItem(keys.registry, JSON.stringify(storedRegistry));
         localStorage.setItem("@paseo:create-agent-preferences", JSON.stringify(storedPreferences));
-        localStorage.setItem(keys.disableDefaultSeedOnce, nonce);
       },
       {
         keys: {
-          disableDefaultSeedOnce: DISABLE_DEFAULT_SEED_ONCE_KEY,
           e2e: E2E_KEY,
           registry: REGISTRY_KEY,
-          seedNonce: SEED_NONCE_KEY,
         },
         registry,
         createAgentPreferences,
@@ -189,7 +176,7 @@ async function installPendingDesktopBridge(page: Page): Promise<void> {
       invoke: async (command: string) => {
         if (command === "start_desktop_daemon") {
           await new Promise(() => {
-            // Keep the daemon in the startup phase until the test ends.
+            // 让 daemon 保持启动中状态直到测试结束。
           });
         }
         if (command === "desktop_daemon_status") {

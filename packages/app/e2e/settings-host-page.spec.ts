@@ -48,13 +48,16 @@ test.describe("Settings host page", () => {
     await expect(connectionsCard).toBeVisible();
     await expect(page.getByText("Connections", { exact: true })).toBeVisible();
     await expect(
-      connectionsCard.getByText(new RegExp(`TCP \\((localhost|127\\.0\\.0\\.1):${port}\\)`)),
+      connectionsCard.getByText(
+        new RegExp(`TCP \\((https?://)?(localhost|127\\.0\\.0\\.1):${port}\\)`),
+      ),
     ).toBeVisible();
 
     const injectMcpCard = page.getByTestId("host-page-inject-mcp-card");
     await expect(injectMcpCard).toBeVisible();
-    await expect(injectMcpCard.getByRole("button", { name: "On", exact: true })).toBeVisible();
-    await expect(injectMcpCard.getByRole("button", { name: "Off", exact: true })).toBeVisible();
+    await expect(
+      injectMcpCard.getByRole("switch", { name: "Inject Paseo tools", exact: true }),
+    ).toBeVisible();
 
     await expect(page.getByTestId("host-page-restart-card")).toBeVisible();
     await expect(page.getByTestId("host-page-restart-button")).toBeVisible();
@@ -151,6 +154,15 @@ test.describe("Settings host page", () => {
               version: null,
               desktopManaged: true,
               error: null,
+            };
+          }
+          if (command === "get_desktop_settings") {
+            return {
+              releaseChannel: "stable",
+              daemon: {
+                manageBuiltInDaemon: false,
+                keepRunningAfterQuit: true,
+              },
             };
           }
           return null;

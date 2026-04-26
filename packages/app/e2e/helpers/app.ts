@@ -18,7 +18,7 @@ function getE2EDaemonPort(): string {
   return port;
 }
 
-async function ensureE2EStorageSeeded(page: Page): Promise<void> {
+export async function ensureE2EStorageSeeded(page: Page): Promise<void> {
   const port = getE2EDaemonPort();
   const expectedEndpoint = `127.0.0.1:${port}`;
   const expectedServerId = process.env.E2E_SERVER_ID;
